@@ -754,6 +754,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "ash-window",
+ "memoffset",
  "vk-shader-macros",
  "winit",
 ]

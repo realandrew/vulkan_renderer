@@ -1,8 +1,32 @@
+mod vertex;
+
+use vertex::Vertex;
 use ash::{vk::{self, DebugUtilsMessengerCreateInfoEXT}};
+
+const WINDOW_TITLE: &'static str = "Andrew's Rust-based Vulkan Renderer";
+
+const VERTICES_DATA: [Vertex; 3] = [
+    Vertex {
+        pos: [0.0, -0.5, 0.0, 1.0],
+        color: [1.0, 0.0, 0.0, 1.0],
+    },
+    Vertex {
+        pos: [0.5, 0.5, 0.0, 1.0],
+        color: [0.0, 1.0, 0.0, 1.0],
+    },
+    Vertex {
+        pos: [-0.5, 0.5, 0.0, 1.0],
+        color: [0.0, 0.0, 1.0, 1.0],
+    },
+];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let eventloop = winit::event_loop::EventLoop::new(); // Create a winit event loop
-    let window = winit::window::Window::new(&eventloop)?; // Create a winit window
+    let window = winit::window::WindowBuilder::new()
+        .with_title(WINDOW_TITLE)
+        //.with_inner_size(winit::dpi::LogicalSize::new(width, height))
+        .build(&eventloop)
+        .expect("Failed to create window!"); // Create a winit window
 
     let mut app = VulkanApp::init(window)?; // Create a vulkan app instance
 
@@ -334,7 +358,8 @@ fn create_commandbuffers(logical_device: &ash::Device, pools: &Pools, amount: us
     unsafe { logical_device.allocate_command_buffers(&command_buffer_allocate_info) }
 }
 
-fn fill_commandbuffers(commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, pipeline: &Pipeline) -> Result<(), vk::Result> {
+// A method to actually perform our renderpass
+fn fill_commandbuffers(commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, pipeline: &Pipeline, vb: &vk::Buffer) -> Result<(), vk::Result> {
     for (i, &commandbuffer) in commandbuffers.iter().enumerate() {
         let commandbuffer_begininfo = vk::CommandBufferBeginInfo::builder(); // Start recording a command buffer
         unsafe {
@@ -372,7 +397,9 @@ fn fill_commandbuffers(commandbuffers: &[vk::CommandBuffer], logical_device: &as
                 pipeline.pipeline,
             );
             // Draw the vertices
-            logical_device.cmd_draw(commandbuffer, 1, 1, 0, 0);
+            logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
+            // TODO: Automatically set vertex count based on active buffer
+            logical_device.cmd_draw(commandbuffer, 3, 1, 0, 0); // This is literally our draw command
             // End the renderpass
             logical_device.cmd_end_render_pass(commandbuffer);
             // End the command buffer
@@ -524,7 +551,7 @@ struct VulkanSwapchain {
     image_available: Vec<vk::Semaphore>,
     rendering_finished: Vec<vk::Semaphore>,
     may_begin_drawing: Vec<vk::Fence>, // A fence is used to synchronize CPU-GPU operations
-    amount_of_images: u32,
+    amount_of_images: usize,
     current_image: usize,
 }
 
@@ -561,7 +588,7 @@ impl VulkanSwapchain {
         let swapchain_loader = ash::extensions::khr::Swapchain::new(instance, logical_device);
         let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None)? };
         let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(swapchain)? };
-        let amount_of_images = swapchain_images.len() as u32;
+        let amount_of_images = swapchain_images.len();
         let mut swapchain_imageviews = Vec::with_capacity(swapchain_images.len());
         for image in &swapchain_images { // Create an image view for each image in the swapchain
             let subresource_range = vk::ImageSubresourceRange::builder()
@@ -688,11 +715,27 @@ impl Pipeline {
         let shader_stages = [vertexshader_stage.build(), fragmentshader_stage.build()];
 
         // What to pass as input to the vertex shader
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
+        let vertex_attrib_descs = Vertex::get_attribute_descriptions(); /*[vk::VertexInputAttributeDescription {
+            location: 0, // Location of the attribute in the shader
+            binding: 0, // Binding of the attribute in the shader (e.g. different for color and position for example)
+            offset: 0, // Offset of the attribute in the vertex struct (in bytes)
+            format: vk::Format::R32G32B32A32_SFLOAT, // Four 32-bit floats (R G B A)
+        }];*/
+
+        // What to pass as input to the vertex shader
+        let vertex_binding_descs = Vertex::get_binding_description(); /*[vk::VertexInputBindingDescription {
+            binding: 0, // Binding of the attribute in the shader (e.g. different for color and position for example)
+            stride: 16, // Stride of the attribute in the vertex struct (in bytes)
+            input_rate: vk::VertexInputRate::VERTEX, // Data changes from vertex to vertex, other option is INSTANCE for instanced rendering
+        }];*/
+
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
+            .vertex_attribute_descriptions(&vertex_attrib_descs)
+            .vertex_binding_descriptions(&vertex_binding_descs);
 
         // Specify how to interpret the vertex data
         let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-            .topology(vk::PrimitiveTopology::POINT_LIST);
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST); // Switch between POINT_LIST and TRIANGLE_LIST
 
         // Create the viewport info
         let viewports = [vk::Viewport {
@@ -849,6 +892,8 @@ struct VulkanApp {
     pipeline: Pipeline,
     pools: Pools,
     commandbuffers: Vec<vk::CommandBuffer>,
+    vertex_buffer: vk::Buffer,
+    vertex_buffer_memory: vk::DeviceMemory,
 }
 
 impl VulkanApp {
@@ -884,8 +929,11 @@ impl VulkanApp {
         // Create the command pools
         let pools = Pools::init(&logical_device, &queue_families)?;
 
+        // Create the vertex buffer
+        let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &logical_device, physical_device);
+
         // Create the command buffers (one for each framebuffer)
-        let commandbuffers = create_commandbuffers(&logical_device, &pools, swapchain.framebuffers.len())?;
+        let commandbuffers = create_commandbuffers(&logical_device, &pools, swapchain.amount_of_images)?;
 
         // Fill the command buffers
         fill_commandbuffers(
@@ -894,6 +942,7 @@ impl VulkanApp {
             &renderpass,
             &swapchain,
             &pipeline,
+            &vertex_buffer,
         )?;
 
         Ok(VulkanApp {
@@ -913,6 +962,8 @@ impl VulkanApp {
             pipeline,
             pools,
             commandbuffers,
+            vertex_buffer,
+            vertex_buffer_memory,
         })
     }
 }
@@ -921,6 +972,10 @@ impl Drop for VulkanApp {
     fn drop(&mut self) {
         unsafe {
             self.device.device_wait_idle().expect("Failed to wait for device idle!"); // Wait for the device to be idle before cleaning up
+
+            self.device.destroy_buffer(self.vertex_buffer, None);
+            self.device.free_memory(self.vertex_buffer_memory, None);
+
             self.pools.cleanup(&self.device); // Cleanup the command pool resources
             self.pipeline.cleanup(&self.device); // Clean up the pipeline
             self.device.destroy_render_pass(self.renderpass, None); // Destroy the render pass
@@ -930,5 +985,99 @@ impl Drop for VulkanApp {
             std::mem::ManuallyDrop::drop(&mut self.debug); // Destroy the debug info
             self.instance.destroy_instance(None) // Destroy the instance
         };
+    }
+}
+
+impl VulkanApp {
+    // Create the vertex buffer
+    fn create_vertex_buffer(
+        instance: &ash::Instance,
+        device: &ash::Device,
+        physical_device: vk::PhysicalDevice,
+    ) -> (vk::Buffer, vk::DeviceMemory) {
+        let vertex_buffer_create_info = vk::BufferCreateInfo {
+            s_type: vk::StructureType::BUFFER_CREATE_INFO,
+            p_next: std::ptr::null(),
+            flags: vk::BufferCreateFlags::empty(),
+            size: std::mem::size_of_val(&VERTICES_DATA) as u64,
+            usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            queue_family_index_count: 0,
+            p_queue_family_indices: std::ptr::null(),
+        };
+
+        let vertex_buffer = unsafe {
+            device
+                .create_buffer(&vertex_buffer_create_info, None)
+                .expect("Failed to create Vertex Buffer")
+        };
+
+        let mem_requirements = unsafe { device.get_buffer_memory_requirements(vertex_buffer) };
+        let mem_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+        let required_memory_flags: vk::MemoryPropertyFlags =
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let memory_type = VulkanApp::find_memory_type(
+            mem_requirements.memory_type_bits,
+            required_memory_flags,
+            mem_properties,
+        );
+
+        let allocate_info = vk::MemoryAllocateInfo {
+            s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
+            p_next: std::ptr::null(),
+            allocation_size: mem_requirements.size,
+            memory_type_index: memory_type,
+        };
+
+        let vertex_buffer_memory = unsafe {
+            device
+                .allocate_memory(&allocate_info, None)
+                .expect("Failed to allocate vertex buffer memory!")
+        };
+
+        unsafe {
+            // Bind the vertex buffer memory to the vertex buffer
+            device
+                .bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0)
+                .expect("Failed to bind Buffer");
+
+            // Copy the vertex data to the vertex buffer memory
+            let data_ptr = device
+                .map_memory(
+                    vertex_buffer_memory,
+                    0,
+                    vertex_buffer_create_info.size,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .expect("Failed to Map Memory") as *mut Vertex;
+
+            data_ptr.copy_from_nonoverlapping(VERTICES_DATA.as_ptr(), VERTICES_DATA.len());
+
+            device.unmap_memory(vertex_buffer_memory);
+        }
+
+        (vertex_buffer, vertex_buffer_memory)
+    }
+
+    fn find_memory_type(
+        type_filter: u32,
+        required_properties: vk::MemoryPropertyFlags,
+        mem_properties: vk::PhysicalDeviceMemoryProperties,
+    ) -> u32 {
+        for (i, memory_type) in mem_properties.memory_types.iter().enumerate() {
+            //if (type_filter & (1 << i)) > 0 && (memory_type.property_flags & required_properties) == required_properties {
+            //    return i as u32
+            // }
+
+            // same implementation
+            if (type_filter & (1 << i)) > 0
+                && memory_type.property_flags.contains(required_properties)
+            {
+                return i as u32;
+            }
+        }
+
+        panic!("Failed to find suitable memory type!")
     }
 }
