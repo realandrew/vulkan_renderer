@@ -13,7 +13,7 @@ impl VulkanDebugInfo {
       let mut debugcreateinfo = vk::DebugUtilsMessengerCreateInfoEXT::builder()
           .message_severity(
               vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                  | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                  //| vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
                   | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
                   | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
           )
