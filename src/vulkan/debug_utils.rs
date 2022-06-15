@@ -10,11 +10,11 @@ pub struct VulkanDebugInfo {
 impl VulkanDebugInfo {
   pub fn init(entry: &ash::Entry, instance: &ash::Instance) -> Result<VulkanDebugInfo, vk::Result> {
       // Set the desired debug info
-      let mut debugcreateinfo = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+      let debugcreateinfo = vk::DebugUtilsMessengerCreateInfoEXT::builder()
           .message_severity(
               vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
                   //| vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-                  | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                  //| vk::DebugUtilsMessageSeverityFlagsEXT::INFO
                   | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
           )
           .message_type(
@@ -34,8 +34,7 @@ impl VulkanDebugInfo {
 impl Drop for VulkanDebugInfo {
   fn drop(&mut self) {
       unsafe {
-          self.loader
-              .destroy_debug_utils_messenger(self.messenger, None) // Destroy the debug messenger
+          self.loader.destroy_debug_utils_messenger(self.messenger, None) // Destroy the debug messenger
       };
   }
 }
@@ -50,6 +49,6 @@ pub unsafe extern "system" fn vulkan_debug_utils_callback(
   let message = std::ffi::CStr::from_ptr((*p_callback_data).p_message);
   let severity = format!("{:?}", message_severity).to_lowercase();
   let ty = format!("{:?}", message_type).to_lowercase();
-  println!("[Vulkan Debug][{}][{}] {:?}", severity, ty, message);
+  println!("[Vulkan][{}][{}] {:?}", severity, ty, message);
   vk::FALSE
 }

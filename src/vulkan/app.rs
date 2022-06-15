@@ -7,6 +7,7 @@ use super::queue::*;
 use super::pipeline::*;
 use super::swapchain::*;
 use super::debug_utils::*;
+use super::vertex_buffer::*;
 use super::vertex::*;
 
 // Stores what we need to use Vulkan to render our graphics (including the window)
@@ -28,8 +29,7 @@ pub struct VulkanApp {
   pub pipeline: Pipeline,
   pub pools: Pools,
   pub commandbuffers: Vec<vk::CommandBuffer>,
-  pub vertex_buffer: vk::Buffer,
-  pub vertex_buffer_memory: vk::DeviceMemory,
+  pub vertex_buffers: Vec<VertexBuffer>,
 }
 
 impl VulkanApp {
@@ -81,7 +81,10 @@ impl VulkanApp {
       ];
 
       // Create the vertex buffer
-      let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &logical_device, physical_device, &vertices);
+      //let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &logical_device, physical_device, &vertices);
+
+      let mut vertex_buffer = VertexBuffer::new(&instance, &physical_device, &logical_device, std::mem::size_of_val(&vertices) as u64);
+      vertex_buffer.update_buffer(&logical_device, &vertices);
 
       // Create the command buffers (one for each framebuffer)
       let commandbuffers = VulkanApp::create_commandbuffers(&logical_device, &pools, swapchain.amount_of_images)?;
@@ -93,7 +96,7 @@ impl VulkanApp {
           &renderpass,
           &swapchain,
           &pipeline,
-          &vertex_buffer,
+          &mut vec![&vertex_buffer],
       )?;
 
       Ok(VulkanApp {
@@ -114,8 +117,7 @@ impl VulkanApp {
           pipeline,
           pools,
           commandbuffers,
-          vertex_buffer,
-          vertex_buffer_memory,
+          vertex_buffers: vec![vertex_buffer],
       })
   }
 
@@ -487,14 +489,17 @@ impl VulkanApp {
       &self.renderpass,
       &self.swapchain,
       &self.pipeline,
-      &self.vertex_buffer,
+      &self.get_vertex_buffers(),
     ).expect("Failed to fill commandbuffers [swapchain recreation].");
 
     println!("Swapchain recreated!");
   }
 
   // A method to actually perform our renderpass
-  pub fn fill_commandbuffers(commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, pipeline: &Pipeline, vb: &vk::Buffer) -> Result<(), vk::Result> {
+  pub fn fill_commandbuffers(
+    commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, 
+    pipeline: &Pipeline, vb: & [&VertexBuffer]
+  ) -> Result<(), vk::Result> {
     unsafe {
       // Wait for our fence to signal that we can write to the command buffer
       logical_device.wait_for_fences(
@@ -541,9 +546,24 @@ impl VulkanApp {
                 pipeline.pipeline,
             );
             // Draw the vertices
-            logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
+            for vb in vb {
+                logical_device.cmd_bind_vertex_buffers(
+                    commandbuffer,
+                    0,
+                    &[vb.get_buffer()],
+                    &[0],
+                );
+                logical_device.cmd_draw(
+                    commandbuffer,
+                    vb.get_vert_count(),
+                    1,
+                    0,
+                    0,
+                );
+            }
+            //logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
             // TODO: Automatically set vertex count based on active buffer
-            logical_device.cmd_draw(commandbuffer, 3, 1, 0, 0); // This is literally our draw command
+            //logical_device.cmd_draw(commandbuffer, 3, 1, 0, 0); // This is literally our draw command
             // End the renderpass
             logical_device.cmd_end_render_pass(commandbuffer);
             // End the command buffer
@@ -645,6 +665,35 @@ impl VulkanApp {
 
       panic!("Failed to find suitable memory type!")
   }
+
+  pub fn set_vertex_buffer(vertex_buffer: vk::Buffer, vertex_buffer_memory: vk::DeviceMemory, device: &ash::Device, vertices: &[Vertex]) {
+    unsafe {
+      let buff_size: u64 = std::mem::size_of_val(&vertex_buffer) as u64;
+
+      // Copy the vertex data to the vertex buffer memory
+      let data_ptr = device
+          .map_memory(
+              vertex_buffer_memory,
+              0,
+              buff_size,
+              vk::MemoryMapFlags::empty(),
+          )
+          .expect("Failed to Map Memory") as *mut Vertex;
+
+      data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
+
+      device.unmap_memory(vertex_buffer_memory);
+    }
+  }
+
+  pub fn get_vertex_buffers(&self) -> Vec<&VertexBuffer> {
+    //&self.vertex_buffers.iter().collect()
+    let mut vbs: Vec<&VertexBuffer> = Vec::new();
+    for vb in &self.vertex_buffers {
+      vbs.push(vb);
+    }
+    vbs
+  }
 }
 
 impl Drop for VulkanApp {
@@ -652,8 +701,11 @@ impl Drop for VulkanApp {
       unsafe {
           self.device.device_wait_idle().expect("Failed to wait for device idle!"); // Wait for the device to be idle before cleaning up
 
-          self.device.destroy_buffer(self.vertex_buffer, None);
-          self.device.free_memory(self.vertex_buffer_memory, None);
+          //self.device.destroy_buffer(self.vertex_buffer, None);
+          //self.device.free_memory(self.vertex_buffer_memory, None);
+          for vb in &self.vertex_buffers {
+            vb.destroy(&self.device);
+          }
 
           // TODO: Track which buffer came from which pool
           self.device.free_command_buffers(self.pools.graphics_command_pool, &self.commandbuffers);
