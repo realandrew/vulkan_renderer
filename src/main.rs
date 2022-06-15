@@ -54,12 +54,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       let delta_time = now.elapsed().as_secs_f32() * 1000.0;
       now = Instant::now();
       let fps = ((1000.0/delta_time) * 10.0).round() / 10.0; // Divide by 10^(num digits after decimal). So 10 for 1 digit, 100 for 2 digits, etc.
-      println!("FPS: {:.0}", fps);
+      //println!("FPS: {:.0}", fps);
+      app.set_window_title(&format!("{} - FPS: {:.0} ({:.3}ms)", WINDOW_TITLE, fps.round(), delta_time));
 
       // Render here
-      if (r_color >= 1.0) {
+      if r_color >= 1.0 {
         target = -1.0;
-      } else if (r_color <= 0.0) {
+      } else if r_color <= 0.0 {
         target = 1.0;
       }
 

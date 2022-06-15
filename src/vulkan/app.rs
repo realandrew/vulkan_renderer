@@ -144,7 +144,17 @@ impl VulkanApp {
                   .unwrap(),
           ); // Get the name of the physical device
 
-          println!("Picked physical device {} with score {}!", device_name, current_score);
+          let driver_major = props.driver_version >> 22; // Get the major version of the driver
+          let driver_minor = (props.driver_version >> 12) & 0x3ff; // Get the minor version of the driver
+          let driver_patch = props.driver_version & 0xfff; // Get the patch version of the driver
+
+          let api_major = vk::api_version_major(props.api_version);
+          let api_minor = vk::api_version_minor(props.api_version);
+          let api_patch = vk::api_version_patch(props.api_version);
+          let api_variant = vk::api_version_variant(props.api_version);
+
+          println!("[Vulkan-render][info] Using {:?} device {} (driver v. {}.{}.{}) with score {}.", props.device_type, device_name, driver_major, driver_minor, driver_patch, current_score);
+          println!("[Vulkan-render][info] Device supports Vulkan v{}.{}.{} (variant {}).", api_major, api_minor, api_patch, api_variant);
           return Some((phys_dev, props, feats));
       }
   }
@@ -198,8 +208,8 @@ impl VulkanApp {
 
   // Initialize Vulkan instance
   pub fn init_instance(entry: &ash::Entry, layer_names: &[&str], window: &winit::window::Window) -> (Result<ash::Instance, vk::Result>, DebugUtilsMessengerCreateInfoEXT) {
-      let enginename = std::ffi::CString::new("Ryoko Engine").unwrap(); // Create a CString with the name of the engine
-      let appname = std::ffi::CString::new("Rust <3 Vulkan").unwrap();
+      let enginename = std::ffi::CString::new("Quasar Engine").unwrap(); // Create a CString with the name of the engine
+      let appname = std::ffi::CString::new("Andrew's Vulkan Renderer").unwrap();
 
       // Set the application info
       let app_info = vk::ApplicationInfo::builder()
@@ -226,13 +236,18 @@ impl VulkanApp {
           ];
       let required_surface_extensions = ash_window::enumerate_required_extensions(&window).unwrap().iter().map(|ext| *ext).collect::<Vec<*const i8>>();
       extension_name_pointers.extend(required_surface_extensions.iter());
-      println!("Using extensions: {:?}", extension_name_pointers);
+
+      println!("Extensions in use: ");
+      for ext in extension_name_pointers.iter() {
+          println!("\t{}", unsafe { std::ffi::CStr::from_ptr(*ext).to_str().unwrap() });
+      }
 
       // Setup debug messenger for validation layers
+      // TODO: Switch this to VulkanDebugInfo
       let mut debugcreateinfo = vk::DebugUtilsMessengerCreateInfoEXT {
           message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
               //| vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-              | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+              //| vk::DebugUtilsMessageSeverityFlagsEXT::INFO
               | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
           message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
               | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
@@ -291,6 +306,7 @@ impl VulkanApp {
           unsafe { logical_device.get_device_queue(queue_families.graphics.unwrap(), 0) };
       let transfer_queue =
           unsafe { logical_device.get_device_queue(queue_families.transfer.unwrap(), 0) };
+
       Ok((
           logical_device,
           Queues {
@@ -693,6 +709,10 @@ impl VulkanApp {
       vbs.push(vb);
     }
     vbs
+  }
+
+  pub fn set_window_title(&self, title: &str) {
+    self.window.set_title(title);
   }
 }
 
