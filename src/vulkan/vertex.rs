@@ -4,7 +4,7 @@ use memoffset::offset_of;
 
 #[repr(C)]
 #[derive(Clone, Debug, Copy)]
-pub(crate) struct Vertex {
+pub struct Vertex {
   pub pos: [f32; 4],
   pub color: [f32; 4],
 }

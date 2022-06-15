@@ -9,21 +9,6 @@ use super::swapchain::*;
 use super::debug_utils::*;
 use super::vertex::*;
 
-const VERTICES_DATA: [Vertex; 3] = [
-    Vertex {
-        pos: [0.0, -0.5, 0.0, 1.0],
-        color: [1.0, 0.0, 0.0, 1.0],
-    },
-    Vertex {
-        pos: [0.5, 0.5, 0.0, 1.0],
-        color: [0.0, 1.0, 0.0, 1.0],
-    },
-    Vertex {
-        pos: [-0.5, 0.5, 0.0, 1.0],
-        color: [0.0, 0.0, 1.0, 1.0],
-    },
-];
-
 // Stores what we need to use Vulkan to render our graphics (including the window)
 pub struct VulkanApp {
   pub window: winit::window::Window,
@@ -80,8 +65,23 @@ impl VulkanApp {
       // Create the command pools
       let pools = Pools::init(&logical_device, &queue_families)?;
 
+      let vertices: [Vertex; 3] = [
+          Vertex {
+              pos: [0.0, -0.5, 0.0, 1.0],
+              color: [1.0, 0.0, 0.0, 1.0],
+          },
+          Vertex {
+              pos: [0.5, 0.5, 0.0, 1.0],
+              color: [0.0, 1.0, 0.0, 1.0],
+          },
+          Vertex {
+              pos: [-0.5, 0.5, 0.0, 1.0],
+              color: [0.0, 0.0, 1.0, 1.0],
+          },
+      ];
+
       // Create the vertex buffer
-      let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &logical_device, physical_device);
+      let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &logical_device, physical_device, &vertices);
 
       // Create the command buffers (one for each framebuffer)
       let commandbuffers = VulkanApp::create_commandbuffers(&logical_device, &pools, swapchain.amount_of_images)?;
@@ -495,53 +495,62 @@ impl VulkanApp {
 
   // A method to actually perform our renderpass
   pub fn fill_commandbuffers(commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, pipeline: &Pipeline, vb: &vk::Buffer) -> Result<(), vk::Result> {
-      for (i, &commandbuffer) in commandbuffers.iter().enumerate() {
-          let commandbuffer_begininfo = vk::CommandBufferBeginInfo::builder(); // Start recording a command buffer
-          unsafe {
-              logical_device.begin_command_buffer(commandbuffer, &commandbuffer_begininfo)?; // Begin the command buffer
-          }
+    unsafe {
+      // Wait for our fence to signal that we can write to the command buffer
+      logical_device.wait_for_fences(
+        &[swapchain.may_begin_drawing[swapchain.current_image]], // The fence to wait for
+        true, // If true wait for all fences, if false wait for at least one fence
+        std::u64::MAX, // How long to wait for the fences (nanoseconds)
+      ).expect("Fence wait failed!");
+    }
+    
+    for (i, &commandbuffer) in commandbuffers.iter().enumerate() {
+        let commandbuffer_begininfo = vk::CommandBufferBeginInfo::builder(); // Start recording a command buffer
+        unsafe {
+            logical_device.begin_command_buffer(commandbuffer, &commandbuffer_begininfo)?; // Begin the command buffer
+        }
 
-          // Clear color
-          let clear_values = [vk::ClearValue {
-              color: vk::ClearColorValue {
-                  float32: [0.0, 0.0, 0.08, 1.0],
-              },
-          }];
+        // Clear color
+        let clear_values = [vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.08, 1.0],
+            },
+        }];
 
-          // Setup a renderpass
-          let renderpass_begininfo = vk::RenderPassBeginInfo::builder()
-              .render_pass(*renderpass)
-              .framebuffer(swapchain.framebuffers[i])
-              .render_area(vk::Rect2D {
-                  offset: vk::Offset2D { x: 0, y: 0 },
-                  extent: swapchain.extent,
-              })
-              .clear_values(&clear_values);
+        // Setup a renderpass
+        let renderpass_begininfo = vk::RenderPassBeginInfo::builder()
+            .render_pass(*renderpass)
+            .framebuffer(swapchain.framebuffers[i])
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: swapchain.extent,
+            })
+            .clear_values(&clear_values);
 
-          unsafe {
-              // Start the renderpass
-              logical_device.cmd_begin_render_pass(
-                  commandbuffer,
-                  &renderpass_begininfo,
-                  vk::SubpassContents::INLINE, // Commands for the first subpass are provided inline, not in a secondary command buffer
-              );
-              // Choose (bind) our graphics pipeline
-              logical_device.cmd_bind_pipeline(
-                  commandbuffer, 
-                  vk::PipelineBindPoint::GRAPHICS, 
-                  pipeline.pipeline,
-              );
-              // Draw the vertices
-              logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
-              // TODO: Automatically set vertex count based on active buffer
-              logical_device.cmd_draw(commandbuffer, 3, 1, 0, 0); // This is literally our draw command
-              // End the renderpass
-              logical_device.cmd_end_render_pass(commandbuffer);
-              // End the command buffer
-              logical_device.end_command_buffer(commandbuffer)?;
-          }
-      }
-      Ok(())
+        unsafe {
+            // Start the renderpass
+            logical_device.cmd_begin_render_pass(
+                commandbuffer,
+                &renderpass_begininfo,
+                vk::SubpassContents::INLINE, // Commands for the first subpass are provided inline, not in a secondary command buffer
+            );
+            // Choose (bind) our graphics pipeline
+            logical_device.cmd_bind_pipeline(
+                commandbuffer, 
+                vk::PipelineBindPoint::GRAPHICS, 
+                pipeline.pipeline,
+            );
+            // Draw the vertices
+            logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
+            // TODO: Automatically set vertex count based on active buffer
+            logical_device.cmd_draw(commandbuffer, 3, 1, 0, 0); // This is literally our draw command
+            // End the renderpass
+            logical_device.cmd_end_render_pass(commandbuffer);
+            // End the command buffer
+            logical_device.end_command_buffer(commandbuffer)?;
+        }
+    }
+    Ok(())
   }
 
   // Create the vertex buffer
@@ -549,12 +558,13 @@ impl VulkanApp {
       instance: &ash::Instance,
       device: &ash::Device,
       physical_device: vk::PhysicalDevice,
+      vertices: &[Vertex],
   ) -> (vk::Buffer, vk::DeviceMemory) {
       let vertex_buffer_create_info = vk::BufferCreateInfo {
           s_type: vk::StructureType::BUFFER_CREATE_INFO,
           p_next: std::ptr::null(),
           flags: vk::BufferCreateFlags::empty(),
-          size: std::mem::size_of_val(&VERTICES_DATA) as u64,
+          size: std::mem::size_of_val(&vertices) as u64,
           usage: vk::BufferUsageFlags::VERTEX_BUFFER,
           sharing_mode: vk::SharingMode::EXCLUSIVE,
           queue_family_index_count: 0,
@@ -607,7 +617,7 @@ impl VulkanApp {
               )
               .expect("Failed to Map Memory") as *mut Vertex;
 
-          data_ptr.copy_from_nonoverlapping(VERTICES_DATA.as_ptr(), VERTICES_DATA.len());
+          data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
 
           device.unmap_memory(vertex_buffer_memory);
       }
