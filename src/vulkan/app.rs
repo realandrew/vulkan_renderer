@@ -153,7 +153,7 @@ impl VulkanApp {
           let api_patch = vk::api_version_patch(props.api_version);
           let api_variant = vk::api_version_variant(props.api_version);
 
-          println!("[Vulkan-render][info] Using {:?} device {} (driver v. {}.{}.{}) with score {}.", props.device_type, device_name, driver_major, driver_minor, driver_patch, current_score);
+          println!("[Vulkan-render][info] Using {:?} device {} (driver v{}.{}.{}) with score {}.", props.device_type, device_name, driver_major, driver_minor, driver_patch, current_score);
           println!("[Vulkan-render][info] Device supports Vulkan v{}.{}.{} (variant {}).", api_major, api_minor, api_patch, api_variant);
           return Some((phys_dev, props, feats));
       }
@@ -462,6 +462,7 @@ impl VulkanApp {
     }
   }
 
+  // TODO: There may be a small memory leak here. I saw this because when the window is resized a bunch of time memory usage goes up slightly without dropping.
   pub fn recreate_swapchain(&mut self) {
     // Recreate the swapchain
     unsafe {

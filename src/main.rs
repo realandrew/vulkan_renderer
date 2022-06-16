@@ -1,12 +1,9 @@
 pub mod vulkan;
 
 use std::time::Instant;
-use rand::Rng;
-
-use ash::vk;
 
 use vulkan::{app::*, vertex::Vertex, vertex_buffer::VertexBuffer};
-use winit::event::WindowEvent;
+use winit::{event::WindowEvent, dpi::Size};
 
 const WINDOW_TITLE: &'static str = "Andrew's Rust-based Vulkan Renderer";
 
@@ -14,18 +11,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let eventloop = winit::event_loop::EventLoop::new(); // Create a winit event loop
   let window = winit::window::WindowBuilder::new()
     .with_title(WINDOW_TITLE)
+    .with_min_inner_size(winit::dpi::PhysicalSize::new(1, 1)) // Having a size of 0 is valid for some platforms but not for Vulkan extents
     //.with_inner_size(winit::dpi::LogicalSize::new(width, height))
     .build(&eventloop)
     .expect("Failed to create window!"); // Create a winit window
 
   let mut app = VulkanApp::init(window)?; // Create a vulkan app instance
   let mut now = Instant::now();
-  let mut rng = rand::thread_rng();
 
   let mut r_color = 0.0;
   let mut g_color = 0.0;
   let mut b_color = 0.0;
+  let mut x_pos = 0.0;
   let mut target = 1.0;
+  let mut pos_target = 1.0;
 
   let vb_two = VertexBuffer::new(&app.instance, &app.physical_device, &app.device, VertexBuffer::get_size_for_num_verts(3));
 
@@ -64,9 +63,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         target = 1.0;
       }
 
+      if x_pos >= 0.5 {
+        pos_target = -1.0;
+      } else if x_pos <= -0.5 {
+        pos_target = 1.0;
+      }
+
       r_color = r_color + (target * (delta_time/1000.0));
       g_color = g_color + (target * (delta_time/1000.0));
       b_color = b_color + (target * (delta_time/1000.0));
+
+      x_pos = x_pos + ((pos_target / 2.0) * (delta_time/1000.0));
 
       let vertices: [Vertex; 3] = [
           Vertex {
@@ -85,15 +92,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
       let vertices_two: [Vertex; 3] = [
           Vertex {
-              pos: [0.0, 0.5, 0.0, 1.0],
+              pos: [x_pos, 0.5, 0.0, 1.0],
               color: [1.0, 1.0, 1.0, 0.4],//color: [1.0, 0.0, 0.0, 1.0],
           },
           Vertex {
-            pos: [0.5, -0.5, 0.0, 1.0],
+            pos: [0.5 + x_pos, -0.5, 0.0, 1.0],
               color: [1.0, 1.0, 1.0, 0.4],
           },
           Vertex {
-            pos: [-0.5, -0.5, 0.0, 1.0],
+            pos: [-0.5 + x_pos, -0.5, 0.0, 1.0],
               color: [1.0, 1.0, 1.0, 0.4],
           },
       ];
