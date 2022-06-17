@@ -9,6 +9,7 @@ use super::swapchain::*;
 use super::debug_utils::*;
 use super::vertex_buffer::*;
 use super::vertex::*;
+use super::index_buffer::*;
 
 // Stores what we need to use Vulkan to render our graphics (including the window)
 pub struct VulkanApp {
@@ -30,6 +31,7 @@ pub struct VulkanApp {
   pub pools: Pools,
   pub commandbuffers: Vec<vk::CommandBuffer>,
   pub vertex_buffers: Vec<VertexBuffer>,
+  pub index_buffers: Vec<IndexBuffer>,
 }
 
 impl VulkanApp {
@@ -97,6 +99,7 @@ impl VulkanApp {
           &swapchain,
           &pipeline,
           &mut vec![&vertex_buffer],
+          None,
       )?;
 
       Ok(VulkanApp {
@@ -118,6 +121,7 @@ impl VulkanApp {
           pools,
           commandbuffers,
           vertex_buffers: vec![vertex_buffer],
+          index_buffers: vec![],
       })
   }
 
@@ -507,6 +511,7 @@ impl VulkanApp {
       &self.swapchain,
       &self.pipeline,
       &self.get_vertex_buffers(),
+      None
     ).expect("Failed to fill commandbuffers [swapchain recreation].");
 
     println!("Swapchain recreated!");
@@ -515,7 +520,7 @@ impl VulkanApp {
   // A method to actually perform our renderpass
   pub fn fill_commandbuffers(
     commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, 
-    pipeline: &Pipeline, vb: & [&VertexBuffer]
+    pipeline: &Pipeline, vb: & [&VertexBuffer], ib: Option<&IndexBuffer>,
   ) -> Result<(), vk::Result> {
     unsafe {
       // Wait for our fence to signal that we can write to the command buffer
@@ -562,21 +567,52 @@ impl VulkanApp {
                 vk::PipelineBindPoint::GRAPHICS, 
                 pipeline.pipeline,
             );
-            // Draw the vertices
-            for vb in vb {
-                logical_device.cmd_bind_vertex_buffers(
-                    commandbuffer,
-                    0,
-                    &[vb.get_buffer()],
-                    &[0],
-                );
-                logical_device.cmd_draw(
-                    commandbuffer,
-                    vb.get_vert_count(),
-                    1,
-                    0,
-                    0,
-                );
+            match ib {
+                Some(index_buffer) => {
+                    // Bind the index buffer
+                    logical_device.cmd_bind_index_buffer(
+                        commandbuffer,
+                        index_buffer.get_buffer(),
+                        0,
+                        vk::IndexType::UINT32, // Can also be UINT16
+                    );
+
+                    // Draw the vertices
+                    for vb in vb {
+                      logical_device.cmd_bind_vertex_buffers(
+                          commandbuffer,
+                          0,
+                          &[vb.get_buffer()],
+                          &[0],
+                      );
+                      logical_device.cmd_draw_indexed(
+                          commandbuffer,
+                          index_buffer.get_indice_count(), // Num verts to draw
+                          1, // Not using instanced drawing
+                          0, // We start at the first index within the index buffer
+                          0, // We start at the first vertex in the vertex buffer
+                          0 // Not using instanced drawing so no offset here
+                      );
+                  }
+                },
+                None => {
+                  // Draw the vertices
+                  for vb in vb {
+                    logical_device.cmd_bind_vertex_buffers(
+                        commandbuffer,
+                        0,
+                        &[vb.get_buffer()],
+                        &[0],
+                    );
+                    logical_device.cmd_draw(
+                        commandbuffer,
+                        vb.get_vert_count(),
+                        1,
+                        0,
+                        0,
+                    );
+                }
+                },
             }
             //logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
             // TODO: Automatically set vertex count based on active buffer
@@ -712,6 +748,15 @@ impl VulkanApp {
     vbs
   }
 
+  pub fn get_index_buffers(&self) -> Vec<&IndexBuffer> {
+    //&self.vertex_buffers.iter().collect()
+    let mut ibs: Vec<&IndexBuffer> = Vec::new();
+    for ib in &self.index_buffers {
+      ibs.push(ib);
+    }
+    ibs
+  }
+
   pub fn set_window_title(&self, title: &str) {
     self.window.set_title(title);
   }
@@ -721,6 +766,10 @@ impl Drop for VulkanApp {
   fn drop(&mut self) {
       unsafe {
           self.device.device_wait_idle().expect("Failed to wait for device idle!"); // Wait for the device to be idle before cleaning up
+
+          for ib in &self.index_buffers {
+            ib.destroy(&self.device);
+          }
 
           //self.device.destroy_buffer(self.vertex_buffer, None);
           //self.device.free_memory(self.vertex_buffer_memory, None);

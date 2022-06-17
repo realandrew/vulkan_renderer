@@ -2,8 +2,8 @@ pub mod vulkan;
 
 use std::time::Instant;
 
-use vulkan::{app::*, vertex::Vertex, vertex_buffer::VertexBuffer};
-use winit::{event::WindowEvent, dpi::Size};
+use vulkan::{app::*, vertex::Vertex, vertex_buffer::VertexBuffer, index_buffer::IndexBuffer};
+use winit::{event::WindowEvent};
 
 const WINDOW_TITLE: &'static str = "Andrew's Rust-based Vulkan Renderer";
 
@@ -27,8 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut pos_target = 1.0;
 
   let vb_two = VertexBuffer::new(&app.instance, &app.physical_device, &app.device, VertexBuffer::get_size_for_num_verts(3));
+  
+  let index_buff_1 = IndexBuffer::new(&app.instance, &app.physical_device, &app.device, IndexBuffer::get_size_for_num_indices(6));
 
   app.vertex_buffers.push(vb_two);
+  app.index_buffers.push(index_buff_1);
 
   // Run the event loop
   eventloop.run(move |event, _, controlflow| match event {
@@ -42,9 +45,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       // Ignore other window events
       _ => {}
     }
-    /*winit::event::Event::WindowEvent { event: winit::event::WindowEvent::CloseRequested, .. } => {
-      *controlflow = winit::event_loop::ControlFlow::Exit;
-    }*/
     winit::event::Event::MainEventsCleared => {
       // doing the work here (later)
       app.window.request_redraw();
@@ -75,20 +75,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
       x_pos = x_pos + ((pos_target / 2.0) * (delta_time/1000.0));
 
-      let vertices: [Vertex; 3] = [
-          Vertex {
-              pos: [0.0, -0.5, 0.0, 1.0],
-              color: [r_color, 0.0, 0.0, 1.0],//color: [1.0, 0.0, 0.0, 1.0],
-          },
-          Vertex {
-              pos: [0.5, 0.5, 0.0, 1.0],
-              color: [0.0, b_color, 0.0, 1.0],
-          },
-          Vertex {
-              pos: [-0.5, 0.5, 0.0, 1.0],
-              color: [0.0, 0.0, g_color, 1.0],
-          },
+      let vertices: [Vertex; 4] = [
+        Vertex {
+          pos: [-0.5, -0.5, 0.0, 1.0],
+          color: [1.0, 0.0, 0.0, 1.0],
+        },
+        Vertex {
+          pos: [0.5, -0.5, 0.0, 1.0],
+          color: [0.0, 1.0, 0.0, 1.0],
+        },
+        Vertex {
+          pos: [0.5, 0.5, 0.0, 1.0],
+          color: [0.0, 0.0, 1.0, 1.0],
+        },
+        Vertex {
+          pos: [-0.5, 0.5, 0.0, 1.0],
+          color: [1.0, 1.0, 1.0, 1.0],
+        },
       ];
+
+      let indices: [u32; 6] = [0, 1, 2, 2, 3, 0]; // Can also use u16
 
       let vertices_two: [Vertex; 3] = [
           Vertex {
@@ -110,8 +116,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       vb_one.update_buffer(&app.device, &vertices);
       let vb_two = app.vertex_buffers.get_mut(1).expect("Failed to fetch vertex buffer!");
       vb_two.update_buffer(&app.device, &vertices_two);
+      
+      let ib_two = app.index_buffers.get_mut(0).expect("Failed to fetch index buffer!");
+      ib_two.update_buffer(&app.device, &indices);
 
-      VulkanApp::fill_commandbuffers(&app.commandbuffers, &app.device, &app.renderpass, &app.swapchain, &app.pipeline, &app.get_vertex_buffers()).expect("Failed to write commands!");
+      VulkanApp::fill_commandbuffers(&app.commandbuffers, &app.device, &app.renderpass, &app.swapchain, 
+        &app.pipeline, &app.get_vertex_buffers(), app.index_buffers.get(0)).expect("Failed to write commands!");
 
       app.draw_frame();
     }
