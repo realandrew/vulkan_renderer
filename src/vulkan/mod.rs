@@ -7,6 +7,9 @@ pub mod swapchain;
 pub mod debug_utils;
 pub mod vertex_buffer;
 pub mod index_buffer;
+pub mod physical_device;
+pub mod logical_device;
+pub mod render_pass;
 pub mod app;
 
 pub mod vertex;

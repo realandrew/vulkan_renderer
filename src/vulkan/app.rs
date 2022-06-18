@@ -10,6 +10,9 @@ use super::debug_utils::*;
 use super::vertex_buffer::*;
 use super::vertex::*;
 use super::index_buffer::*;
+use super::physical_device::*;
+use super::logical_device::*;
+use super::render_pass::*;
 
 // Stores what we need to use Vulkan to render our graphics (including the window)
 pub struct VulkanApp {
@@ -44,19 +47,19 @@ impl VulkanApp {
       let surface = VulkanSurface::init(&window, &entry, &instance)?; // Create the surface
 
       // Find the most suitable physical device
-      let (physical_device, physical_device_properties, physical_device_features) = VulkanApp::pick_physical_device(&instance).expect("No suitable physical device found!");
+      let (physical_device, physical_device_properties, physical_device_features) = PhysicalDevice::pick_physical_device(&instance).expect("No suitable physical device found!");
 
       // Find the most suitable queue families on the physical device
       let queue_families = QueueFamilies::init(&instance, physical_device, &surface)?;
 
       // Create the logical device
-      let (logical_device, queues) = VulkanApp::init_device_and_queues(&instance, physical_device, &queue_families, &layer_names)?;
+      let (logical_device, queues) = LogicalDevice::init_device_and_queues(&instance, physical_device, &queue_families, &layer_names)?;
 
       // Create the swapchain
       let mut swapchain = VulkanSwapchain::init(&instance, physical_device, &logical_device, &surface, &queue_families, &queues)?;
 
       // Create the render pass
-      let renderpass = VulkanApp::init_renderpass(&logical_device, physical_device, swapchain.surface_format.format)?;
+      let renderpass = RenderPass::init_renderpass(&logical_device, physical_device, swapchain.surface_format.format)?;
 
       // Create the framebuffers
       swapchain.create_framebuffers(&logical_device, renderpass)?;
@@ -125,91 +128,6 @@ impl VulkanApp {
       })
   }
 
-  // Pick the best available Vulkan physical device. This means the highest rated one that is suitable.
-  pub fn pick_physical_device(instance: &ash::Instance) -> Option<(vk::PhysicalDevice, vk::PhysicalDeviceProperties, vk::PhysicalDeviceFeatures)> {
-      let phys_devs = unsafe { instance.enumerate_physical_devices().expect("Could not enumerate physical devices!") }; // Get all physical devices
-      let mut phys_dev: vk::PhysicalDevice = vk::PhysicalDevice::null(); // Create a null physical device
-      let mut current_score = 0.0; // Create a score variable
-      for p in &phys_devs { // For each physical device
-          let score = VulkanApp::rate_physical_device(instance, p);
-          if score > current_score { // If the score is higher than the current score, set the physical device to this one
-              current_score = score;
-              phys_dev = *p;
-          }
-      }
-      if phys_dev == vk::PhysicalDevice::null() { // If the physical device is null, return None (this means no suitable devices were found)
-          return None;
-      } else {
-          let props = unsafe { instance.get_physical_device_properties(phys_dev) }; // Get the properties of the physical device
-          let feats = unsafe { instance.get_physical_device_features(phys_dev) }; // Get the features of the physical device
-          let device_name = String::from(
-              unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
-                  .to_str()
-                  .unwrap(),
-          ); // Get the name of the physical device
-
-          let driver_major = props.driver_version >> 22; // Get the major version of the driver
-          let driver_minor = (props.driver_version >> 12) & 0x3ff; // Get the minor version of the driver
-          let driver_patch = props.driver_version & 0xfff; // Get the patch version of the driver
-
-          let api_major = vk::api_version_major(props.api_version);
-          let api_minor = vk::api_version_minor(props.api_version);
-          let api_patch = vk::api_version_patch(props.api_version);
-          let api_variant = vk::api_version_variant(props.api_version);
-
-          println!("[Vulkan-render][info] Using {:?} device {} (driver v{}.{}.{}) with score {}.", props.device_type, device_name, driver_major, driver_minor, driver_patch, current_score);
-          println!("[Vulkan-render][info] Device supports Vulkan v{}.{}.{} (variant {}).", api_major, api_minor, api_patch, api_variant);
-          return Some((phys_dev, props, feats));
-      }
-  }
-
-  // Rate device based on its properties (whether its discrete, integrated, etc; how many queues it has, etc)
-  // We also check if the device is suitable at all for our needs (Check for hard requirements [things like if it supports geometry shaders, certain extensions, etc])
-  pub fn rate_physical_device(instance: &ash::Instance, device: &vk::PhysicalDevice) -> f32 {
-      let props = unsafe { instance.get_physical_device_properties(*device) }; // Get the properties of the physical device
-      //dbg!(props);
-      let features = unsafe { instance.get_physical_device_features(*device) }; // Get the features of the physical device
-      //dbg!(features);
-      let queuefamilyproperties = unsafe { instance.get_physical_device_queue_family_properties(*device) }; // Get the queue family properties of the physical device
-      //dbg!(&queuefamilyproperties);
-      
-      let mut score = 0.0;
-
-      if props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU { // Dedicated local GPU
-          score += 1000.0;
-      } else if props.device_type == vk::PhysicalDeviceType::VIRTUAL_GPU { // Unknown GPU connected through virtual machine (likely dedicated)
-          score += 500.0;
-      } else if props.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU { // Integrated local GPU
-          score += 250.0;
-      }
-      // 0 score for CPU and OTHER types
-
-      // Maximum possible size of textures affects graphics quality
-      score += props.limits.max_image_dimension2_d as f32;
-
-      // Application can't function without geometry shaders
-      if features.geometry_shader < 1 { // Features are either 0 (not supported) or 1 (supported)
-          return 0.0;
-      }
-
-      let mut found_graphics_queue = false; // We need a graphics queue
-      let mut found_transfer_queue = false; // We need a transfer queue
-      for (_index, qfam) in queuefamilyproperties.iter().enumerate() {
-          if qfam.queue_count > 0 && qfam.queue_flags.contains(vk::QueueFlags::GRAPHICS) { // We need a graphics queue with at least one queue
-              found_graphics_queue = true;
-          }
-          if qfam.queue_count > 0 && qfam.queue_flags.contains(vk::QueueFlags::TRANSFER) { // We need a transfer queue with at least one queue
-              found_transfer_queue = true;
-          }
-      }
-
-      if !found_graphics_queue || !found_transfer_queue {
-          return 0.0;
-      }
-
-      score
-  }
-
   // Initialize Vulkan instance
   pub fn init_instance(entry: &ash::Entry, layer_names: &[&str], window: &winit::window::Window) -> (Result<ash::Instance, vk::Result>, DebugUtilsMessengerCreateInfoEXT) {
       let enginename = std::ffi::CString::new("Quasar Engine").unwrap(); // Create a CString with the name of the engine
@@ -268,108 +186,6 @@ impl VulkanApp {
           .enabled_extension_names(&extension_name_pointers);
 
       unsafe { (entry.create_instance(&create_info, None), debugcreateinfo) }
-  }
-
-  pub fn init_device_and_queues(instance: &ash::Instance, physical_device: vk::PhysicalDevice, queue_families: &QueueFamilies, layer_names: &[&str]) -> Result<(ash::Device, Queues), vk::Result> {
-      // Turn the layer names into proper format
-      let layer_names_c: Vec<std::ffi::CString> = layer_names
-          .iter()
-          .map(|&ln| std::ffi::CString::new(ln).unwrap())
-          .collect();
-      let layer_name_pointers: Vec<*const i8> = layer_names_c
-          .iter()
-          .map(|layer_name| layer_name.as_ptr())
-          .collect();
-
-      let priorities = [1.0f32]; // We only have one queue of each type, so we set the priority to 1.0. Priority is a float between 0.0 and 1.0, with 0.0 being the lowest priority.
-      let queue_infos = [ // We want a graphics and transfer queue
-          vk::DeviceQueueCreateInfo::builder()
-              .queue_family_index(queue_families.graphics.unwrap())
-              .queue_priorities(&priorities)
-              .build(),
-          vk::DeviceQueueCreateInfo::builder()
-              .queue_family_index(queue_families.transfer.unwrap())
-              .queue_priorities(&priorities)
-              .build(),
-      ];
-
-      // Get info about device extensions
-      let device_extension_name_pointers: Vec<*const i8> =
-          vec![ash::extensions::khr::Swapchain::name().as_ptr()];
-
-      // Create the logical device
-      let device_create_info = vk::DeviceCreateInfo::builder()
-          .queue_create_infos(&queue_infos)
-          .enabled_extension_names(&device_extension_name_pointers)
-          .enabled_layer_names(&layer_name_pointers);
-      let logical_device =
-          unsafe { instance.create_device(physical_device, &device_create_info, None)? };
-
-      // Get the queues
-      let graphics_queue =
-          unsafe { logical_device.get_device_queue(queue_families.graphics.unwrap(), 0) };
-      let transfer_queue =
-          unsafe { logical_device.get_device_queue(queue_families.transfer.unwrap(), 0) };
-
-      Ok((
-          logical_device,
-          Queues {
-              graphics_queue,
-              transfer_queue,
-          },
-      ))
-  }
-
-  pub fn init_renderpass(logical_device: &ash::Device, physical_device: vk::PhysicalDevice, format: vk::Format) -> Result<vk::RenderPass, vk::Result> {
-      let attachments = [vk::AttachmentDescription::builder()
-          .format(format) // Format must be sample as the swapchain
-          .load_op(vk::AttachmentLoadOp::CLEAR) // What to do when the attachment is first loaded (clear it)
-          .store_op(vk::AttachmentStoreOp::STORE) // What to do when the renderpass is complete (store it)
-          .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-          .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-          .initial_layout(vk::ImageLayout::UNDEFINED) // The initial layout of the attachment (how the data is stored in memory)
-          .final_layout(vk::ImageLayout::PRESENT_SRC_KHR) // The final layout of the attachment (ready for presentation)
-          .samples(vk::SampleCountFlags::TYPE_1) // Samples per pixel for the attachment (1 means no anti-aliasing)
-          .build()
-      ];
-
-      let color_attachment_references = [vk::AttachmentReference {
-          attachment: 0,
-          layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, // Use a layout that is optimal for color attachments
-      }]; // Attach this attachment to the color attachment point as attachment 0
-
-      // Grab a subpass (a render pass is a collection of subpasses), FYI this is only for graphics pipelines, not for compute pipelines
-      let subpasses = [vk::SubpassDescription::builder()
-              .color_attachments(&color_attachment_references)
-              .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS).build()];
-
-      // Define subpass dependencies (how the subpasses are connected if we have multiple subpasses)
-      let subpass_dependencies = [vk::SubpassDependency::builder()
-          .src_subpass(vk::SUBPASS_EXTERNAL)
-          .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-          .dst_subpass(0)
-          .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-          .dst_access_mask(
-              vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-          )
-          .build()];
-
-      // Set up the render pass
-      let renderpass_info = vk::RenderPassCreateInfo::builder()
-          .attachments(&attachments)
-          .subpasses(&subpasses)
-          .dependencies(&subpass_dependencies);
-
-      // Create the render pass
-      let renderpass = unsafe { logical_device.create_render_pass(&renderpass_info, None)? };
-
-      Ok(renderpass)
-  }
-
-  pub fn cleanup_renderpass(logical_device: &ash::Device, renderpass: vk::RenderPass) {
-      unsafe {
-          logical_device.destroy_render_pass(renderpass, None);
-      }
   }
 
   // Creates the desired number of command buffers
@@ -466,7 +282,7 @@ impl VulkanApp {
     }
   }
 
-  // TODO: There may be a small memory leak here. I saw this because when the window is resized a bunch of time memory usage goes up slightly without dropping.
+  // TODO: There may be a small memory leak here. I saw this because when the window is resized a bunch of times memory usage goes up slightly without dropping.
   pub fn recreate_swapchain(&mut self) {
     // Recreate the swapchain
     unsafe {
@@ -481,7 +297,8 @@ impl VulkanApp {
 
       self.pools.cleanup(&self.device); // Cleanup the command pool resources
       self.pipeline.cleanup(&self.device); // Clean up the pipeline
-      self.device.destroy_render_pass(self.renderpass, None); // Destroy the render pass
+      //self.device.destroy_render_pass(self.renderpass, None); // Destroy the render pass
+      RenderPass::cleanup_renderpass(&self.device, self.renderpass);
       self.swapchain.cleanup(&self.device); // Destroy the swapchain
     }
 
@@ -489,7 +306,7 @@ impl VulkanApp {
     self.swapchain = VulkanSwapchain::init(&self.instance, self.physical_device, &self.device, &self.surface, &self.queue_families, &self.queues).expect("Failed to recreate swapchain [swapchain recreation].");
 
     // Create the render pass
-    self.renderpass = VulkanApp::init_renderpass(&self.device, self.physical_device, self.swapchain.surface_format.format).expect("Failed to recreate renderpass [swapchain recreation].");
+    self.renderpass = RenderPass::init_renderpass(&self.device, self.physical_device, self.swapchain.surface_format.format).expect("Failed to recreate renderpass [swapchain recreation].");
 
     // Create the framebuffers
     self.swapchain.create_framebuffers(&self.device, self.renderpass).expect("Failed to recreate framebuffers [swapchain recreation].");
@@ -569,7 +386,7 @@ impl VulkanApp {
             );
             match ib {
                 Some(index_buffer) => {
-                    // Bind the index buffer
+                    // Bind the index buffer (unlike vertex buffers, can only have 1 index buffer bound at a time)
                     logical_device.cmd_bind_index_buffer(
                         commandbuffer,
                         index_buffer.get_buffer(),
@@ -626,78 +443,6 @@ impl VulkanApp {
     Ok(())
   }
 
-  // Create the vertex buffer
-  pub fn create_vertex_buffer(
-      instance: &ash::Instance,
-      device: &ash::Device,
-      physical_device: vk::PhysicalDevice,
-      vertices: &[Vertex],
-  ) -> (vk::Buffer, vk::DeviceMemory) {
-      let vertex_buffer_create_info = vk::BufferCreateInfo {
-          s_type: vk::StructureType::BUFFER_CREATE_INFO,
-          p_next: std::ptr::null(),
-          flags: vk::BufferCreateFlags::empty(),
-          size: std::mem::size_of_val(&vertices) as u64,
-          usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-          sharing_mode: vk::SharingMode::EXCLUSIVE,
-          queue_family_index_count: 0,
-          p_queue_family_indices: std::ptr::null(),
-      };
-
-      let vertex_buffer = unsafe {
-          device
-              .create_buffer(&vertex_buffer_create_info, None)
-              .expect("Failed to create Vertex Buffer")
-      };
-
-      let mem_requirements = unsafe { device.get_buffer_memory_requirements(vertex_buffer) };
-      let mem_properties =
-          unsafe { instance.get_physical_device_memory_properties(physical_device) };
-      let required_memory_flags: vk::MemoryPropertyFlags =
-          vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-      let memory_type = VulkanApp::find_memory_type(
-          mem_requirements.memory_type_bits,
-          required_memory_flags,
-          mem_properties,
-      );
-
-      let allocate_info = vk::MemoryAllocateInfo {
-          s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
-          p_next: std::ptr::null(),
-          allocation_size: mem_requirements.size,
-          memory_type_index: memory_type,
-      };
-
-      let vertex_buffer_memory = unsafe {
-          device
-              .allocate_memory(&allocate_info, None)
-              .expect("Failed to allocate vertex buffer memory!")
-      };
-
-      unsafe {
-          // Bind the vertex buffer memory to the vertex buffer
-          device
-              .bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0)
-              .expect("Failed to bind Buffer");
-
-          // Copy the vertex data to the vertex buffer memory
-          let data_ptr = device
-              .map_memory(
-                  vertex_buffer_memory,
-                  0,
-                  vertex_buffer_create_info.size,
-                  vk::MemoryMapFlags::empty(),
-              )
-              .expect("Failed to Map Memory") as *mut Vertex;
-
-          data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
-
-          device.unmap_memory(vertex_buffer_memory);
-      }
-
-      (vertex_buffer, vertex_buffer_memory)
-  }
-
   pub fn find_memory_type(
       type_filter: u32,
       required_properties: vk::MemoryPropertyFlags,
@@ -717,26 +462,6 @@ impl VulkanApp {
       }
 
       panic!("Failed to find suitable memory type!")
-  }
-
-  pub fn set_vertex_buffer(vertex_buffer: vk::Buffer, vertex_buffer_memory: vk::DeviceMemory, device: &ash::Device, vertices: &[Vertex]) {
-    unsafe {
-      let buff_size: u64 = std::mem::size_of_val(&vertex_buffer) as u64;
-
-      // Copy the vertex data to the vertex buffer memory
-      let data_ptr = device
-          .map_memory(
-              vertex_buffer_memory,
-              0,
-              buff_size,
-              vk::MemoryMapFlags::empty(),
-          )
-          .expect("Failed to Map Memory") as *mut Vertex;
-
-      data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
-
-      device.unmap_memory(vertex_buffer_memory);
-    }
   }
 
   pub fn get_vertex_buffers(&self) -> Vec<&VertexBuffer> {
