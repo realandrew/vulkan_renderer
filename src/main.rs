@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   let mut app = VulkanApp::init(window)?; // Create a vulkan app instance
   let mut now = Instant::now();
+  let mut avg_fps = 0.0;
 
   simple_logger::SimpleLogger::new().env().init().unwrap();
 
@@ -53,8 +54,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       let delta_time = now.elapsed().as_secs_f32() * 1000.0;
       now = Instant::now();
       let fps = ((1000.0/delta_time) * 10.0).round() / 10.0; // Divide by 10^(num digits after decimal). So 10 for 1 digit, 100 for 2 digits, etc.
+      avg_fps = (avg_fps + fps) / 2.0;
       //println!("FPS: {:.0}", fps);
-      app.set_window_title(&format!("{} - FPS: {:.0} ({:.3}ms)", WINDOW_TITLE, fps.round(), delta_time));
+      app.set_window_title(&format!("{} - FPS: {:.0} ({:.3}ms) | AVG FPS: {:.0}", WINDOW_TITLE, fps.round(), delta_time, avg_fps.round()));
 
       // Render here
       if r_color >= 1.0 {
