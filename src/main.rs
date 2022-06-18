@@ -2,7 +2,7 @@ pub mod vulkan;
 
 use std::time::Instant;
 
-use vulkan::{app::*, vertex::Vertex, vertex_buffer::VertexBuffer, index_buffer::IndexBuffer};
+use vulkan::{app::*, vertex::Vertex, vertex_buffer::VertexBuffer, index_buffer::IndexBuffer, renderable::Renderable};
 use winit::{event::WindowEvent};
 
 const WINDOW_TITLE: &'static str = "Andrew's Rust-based Vulkan Renderer";
@@ -19,19 +19,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut app = VulkanApp::init(window)?; // Create a vulkan app instance
   let mut now = Instant::now();
 
+  simple_logger::SimpleLogger::new().env().init().unwrap();
+
+  let renderable_1 = Renderable::new(&app.device, &mut app.allocator, 4, 6).expect("Failed to create renderable");
+  app.renderables.push(renderable_1);
+  let renderable_2 = Renderable::new(&app.device, &mut app.allocator, 3, 0).expect("Failed to create renderable");
+  app.renderables.push(renderable_2);
+
   let mut r_color = 0.0;
   let mut g_color = 0.0;
   let mut b_color = 0.0;
   let mut x_pos = 0.0;
   let mut target = 1.0;
   let mut pos_target = 1.0;
-
-  let vb_two = VertexBuffer::new(&app.instance, &app.physical_device, &app.device, VertexBuffer::get_size_for_num_verts(3));
-  
-  let index_buff_1 = IndexBuffer::new(&app.instance, &app.physical_device, &app.device, IndexBuffer::get_size_for_num_indices(6));
-
-  app.vertex_buffers.push(vb_two);
-  app.index_buffers.push(index_buff_1);
 
   // Run the event loop
   eventloop.run(move |event, _, controlflow| match event {
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       let vertices_two: [Vertex; 3] = [
           Vertex {
               pos: [x_pos, 0.5, 0.0, 1.0],
-              color: [1.0, 1.0, 1.0, 0.4],//color: [1.0, 0.0, 0.0, 1.0],
+              color: [1.0, 1.0, 1.0, 0.4],
           },
           Vertex {
             pos: [0.5 + x_pos, -0.5, 0.0, 1.0],
@@ -111,17 +111,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
           },
       ];
 
-      // Update the vertex buffer
-      let vb_one = app.vertex_buffers.get_mut(0).expect("Failed to fetch vertex buffer!");
-      vb_one.update_buffer(&app.device, &vertices);
-      let vb_two = app.vertex_buffers.get_mut(1).expect("Failed to fetch vertex buffer!");
-      vb_two.update_buffer(&app.device, &vertices_two);
-      
-      let ib_two = app.index_buffers.get_mut(0).expect("Failed to fetch index buffer!");
-      ib_two.update_buffer(&app.device, &indices);
+      app.renderables.get_mut(0).unwrap().update_vertices_buffer(&app.device, &vertices);
+      app.renderables.get_mut(0).unwrap().update_indices_buffer(&app.device, &indices);
+
+      app.renderables.get_mut(1).unwrap().update_vertices_buffer(&app.device, &vertices_two);
 
       VulkanApp::fill_commandbuffers(&app.commandbuffers, &app.device, &app.renderpass, &app.swapchain, 
-        &app.pipeline, &app.get_vertex_buffers(), app.index_buffers.get(0)).expect("Failed to write commands!");
+        &app.pipeline, &app.renderables).expect("Failed to write commands!");
 
       app.draw_frame();
     }

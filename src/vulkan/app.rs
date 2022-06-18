@@ -1,5 +1,6 @@
 use ash::vk;
 use ash::vk::DebugUtilsMessengerCreateInfoEXT;
+use gpu_allocator::vulkan::*;
 
 use super::surface::*;
 use super::command_pool::*;
@@ -12,6 +13,7 @@ use super::vertex::*;
 use super::index_buffer::*;
 use super::physical_device::*;
 use super::logical_device::*;
+use super::renderable::*;
 use super::render_pass::*;
 
 // Stores what we need to use Vulkan to render our graphics (including the window)
@@ -33,8 +35,8 @@ pub struct VulkanApp {
   pub pipeline: Pipeline,
   pub pools: Pools,
   pub commandbuffers: Vec<vk::CommandBuffer>,
-  pub vertex_buffers: Vec<VertexBuffer>,
-  pub index_buffers: Vec<IndexBuffer>,
+  pub allocator: std::mem::ManuallyDrop<Allocator>,
+  pub renderables: Vec<Renderable>,
 }
 
 impl VulkanApp {
@@ -70,26 +72,15 @@ impl VulkanApp {
       // Create the command pools
       let pools = Pools::init(&logical_device, &queue_families)?;
 
-      let vertices: [Vertex; 3] = [
-          Vertex {
-              pos: [0.0, -0.5, 0.0, 1.0],
-              color: [1.0, 0.0, 0.0, 1.0],
-          },
-          Vertex {
-              pos: [0.5, 0.5, 0.0, 1.0],
-              color: [0.0, 1.0, 0.0, 1.0],
-          },
-          Vertex {
-              pos: [-0.5, 0.5, 0.0, 1.0],
-              color: [0.0, 0.0, 1.0, 1.0],
-          },
-      ];
-
-      // Create the vertex buffer
-      //let (vertex_buffer, vertex_buffer_memory) = VulkanApp::create_vertex_buffer(&instance, &logical_device, physical_device, &vertices);
-
-      let mut vertex_buffer = VertexBuffer::new(&instance, &physical_device, &logical_device, std::mem::size_of_val(&vertices) as u64);
-      vertex_buffer.update_buffer(&logical_device, &vertices);
+      let buffer_device_address = false; // Check for and enable buffer device address support at creation time
+      let mut allocator = Allocator::new(&AllocatorCreateDesc {
+        instance: instance.clone(),
+        device: logical_device.clone(),
+        physical_device,
+        debug_settings: Default::default(),
+        buffer_device_address: buffer_device_address,  // Ideally, check the BufferDeviceAddressFeatures struct.
+      }).expect("Failed to create allocator!");
+      allocator.report_memory_leaks(log::Level::Info);
 
       // Create the command buffers (one for each framebuffer)
       let commandbuffers = VulkanApp::create_commandbuffers(&logical_device, &pools, swapchain.amount_of_images)?;
@@ -101,8 +92,7 @@ impl VulkanApp {
           &renderpass,
           &swapchain,
           &pipeline,
-          &mut vec![&vertex_buffer],
-          None,
+          &vec![],
       )?;
 
       Ok(VulkanApp {
@@ -123,8 +113,8 @@ impl VulkanApp {
           pipeline,
           pools,
           commandbuffers,
-          vertex_buffers: vec![vertex_buffer],
-          index_buffers: vec![],
+          allocator: std::mem::ManuallyDrop::new(allocator),
+          renderables: vec![],
       })
   }
 
@@ -327,8 +317,7 @@ impl VulkanApp {
       &self.renderpass,
       &self.swapchain,
       &self.pipeline,
-      &self.get_vertex_buffers(),
-      None
+      &self.renderables,
     ).expect("Failed to fill commandbuffers [swapchain recreation].");
 
     println!("Swapchain recreated!");
@@ -337,7 +326,7 @@ impl VulkanApp {
   // A method to actually perform our renderpass
   pub fn fill_commandbuffers(
     commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, 
-    pipeline: &Pipeline, vb: & [&VertexBuffer], ib: Option<&IndexBuffer>,
+    pipeline: &Pipeline, renderables: &Vec<Renderable>,
   ) -> Result<(), vk::Result> {
     unsafe {
       // Wait for our fence to signal that we can write to the command buffer
@@ -349,137 +338,99 @@ impl VulkanApp {
     }
     
     for (i, &commandbuffer) in commandbuffers.iter().enumerate() {
-        let commandbuffer_begininfo = vk::CommandBufferBeginInfo::builder(); // Start recording a command buffer
-        unsafe {
-            logical_device.begin_command_buffer(commandbuffer, &commandbuffer_begininfo)?; // Begin the command buffer
-        }
-
-        // Clear color
-        let clear_values = [vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.08, 1.0],
-            },
-        }];
-
-        // Setup a renderpass
-        let renderpass_begininfo = vk::RenderPassBeginInfo::builder()
-            .render_pass(*renderpass)
-            .framebuffer(swapchain.framebuffers[i])
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: swapchain.extent,
-            })
-            .clear_values(&clear_values);
-
-        unsafe {
-            // Start the renderpass
-            logical_device.cmd_begin_render_pass(
-                commandbuffer,
-                &renderpass_begininfo,
-                vk::SubpassContents::INLINE, // Commands for the first subpass are provided inline, not in a secondary command buffer
-            );
-            // Choose (bind) our graphics pipeline
-            logical_device.cmd_bind_pipeline(
-                commandbuffer, 
-                vk::PipelineBindPoint::GRAPHICS, 
-                pipeline.pipeline,
-            );
-            match ib {
-                Some(index_buffer) => {
-                    // Bind the index buffer (unlike vertex buffers, can only have 1 index buffer bound at a time)
-                    logical_device.cmd_bind_index_buffer(
-                        commandbuffer,
-                        index_buffer.get_buffer(),
-                        0,
-                        vk::IndexType::UINT32, // Can also be UINT16
-                    );
-
-                    // Draw the vertices
-                    for vb in vb {
-                      logical_device.cmd_bind_vertex_buffers(
-                          commandbuffer,
-                          0,
-                          &[vb.get_buffer()],
-                          &[0],
-                      );
-                      logical_device.cmd_draw_indexed(
-                          commandbuffer,
-                          index_buffer.get_indice_count(), // Num verts to draw
-                          1, // Not using instanced drawing
-                          0, // We start at the first index within the index buffer
-                          0, // We start at the first vertex in the vertex buffer
-                          0 // Not using instanced drawing so no offset here
-                      );
-                  }
-                },
-                None => {
-                  // Draw the vertices
-                  for vb in vb {
-                    logical_device.cmd_bind_vertex_buffers(
-                        commandbuffer,
-                        0,
-                        &[vb.get_buffer()],
-                        &[0],
-                    );
-                    logical_device.cmd_draw(
-                        commandbuffer,
-                        vb.get_vert_count(),
-                        1,
-                        0,
-                        0,
-                    );
-                }
-                },
-            }
-            //logical_device.cmd_bind_vertex_buffers(commandbuffer, 0, &[*vb], &[0]);
-            // TODO: Automatically set vertex count based on active buffer
-            //logical_device.cmd_draw(commandbuffer, 3, 1, 0, 0); // This is literally our draw command
-            // End the renderpass
-            logical_device.cmd_end_render_pass(commandbuffer);
-            // End the command buffer
-            logical_device.end_command_buffer(commandbuffer)?;
-        }
-    }
-    Ok(())
-  }
-
-  pub fn find_memory_type(
-      type_filter: u32,
-      required_properties: vk::MemoryPropertyFlags,
-      mem_properties: vk::PhysicalDeviceMemoryProperties,
-  ) -> u32 {
-      for (i, memory_type) in mem_properties.memory_types.iter().enumerate() {
-          //if (type_filter & (1 << i)) > 0 && (memory_type.property_flags & required_properties) == required_properties {
-          //    return i as u32
-          // }
-
-          // same implementation
-          if (type_filter & (1 << i)) > 0
-              && memory_type.property_flags.contains(required_properties)
-          {
-              return i as u32;
-          }
+      let commandbuffer_begininfo = vk::CommandBufferBeginInfo::builder(); // Start recording a command buffer
+      unsafe {
+          logical_device.begin_command_buffer(commandbuffer, &commandbuffer_begininfo)?; // Begin the command buffer
       }
 
-      panic!("Failed to find suitable memory type!")
-  }
+      // Clear color
+      let clear_values = [vk::ClearValue {
+          color: vk::ClearColorValue {
+              float32: [0.0, 0.0, 0.08, 1.0],
+          },
+      }];
 
-  pub fn get_vertex_buffers(&self) -> Vec<&VertexBuffer> {
-    //&self.vertex_buffers.iter().collect()
-    let mut vbs: Vec<&VertexBuffer> = Vec::new();
-    for vb in &self.vertex_buffers {
-      vbs.push(vb);
-    }
-    vbs
-  }
+      // Setup a renderpass
+      let renderpass_begininfo = vk::RenderPassBeginInfo::builder()
+        .render_pass(*renderpass)
+        .framebuffer(swapchain.framebuffers[i])
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: swapchain.extent,
+        })
+        .clear_values(&clear_values);
 
-  pub fn get_index_buffers(&self) -> Vec<&IndexBuffer> {
-    //&self.vertex_buffers.iter().collect()
-    let mut ibs: Vec<&IndexBuffer> = Vec::new();
-    for ib in &self.index_buffers {
-      ibs.push(ib);
+      unsafe {
+        // Start the renderpass
+        logical_device.cmd_begin_render_pass(
+            commandbuffer,
+            &renderpass_begininfo,
+            vk::SubpassContents::INLINE, // Commands for the first subpass are provided inline, not in a secondary command buffer
+        );
+
+        for (_i, renderable) in renderables.iter().enumerate() {
+          // Choose (bind) our graphics pipeline
+          logical_device.cmd_bind_pipeline(
+            commandbuffer, 
+            vk::PipelineBindPoint::GRAPHICS, 
+            pipeline.pipeline,
+          );
+          match &renderable.index_buffer {
+            Some(index_buffer) => {
+              // Bind the index buffer (unlike vertex buffers, can only have 1 index buffer bound at a time)
+              logical_device.cmd_bind_index_buffer(
+                  commandbuffer,
+                  index_buffer.get_buffer(),
+                  0,
+                  vk::IndexType::UINT32, // Can also be UINT16
+              );
+
+              // Draw the vertices
+              for vb in &renderable.vertex_buffers {
+                logical_device.cmd_bind_vertex_buffers(
+                    commandbuffer,
+                    0,
+                    &[vb.get_buffer()],
+                    &[0],
+              );
+              logical_device.cmd_draw_indexed(
+                commandbuffer,
+                index_buffer.get_indice_count(), // Num verts to draw
+                1, // Not using instanced drawing
+                0, // We start at the first index within the index buffer
+                0, // We start at the first vertex in the vertex buffer
+                0 // Not using instanced drawing so no offset here
+              );
+            }
+            },
+            None => {
+              // Draw the vertices
+              for vb in &renderable.vertex_buffers {
+                logical_device.cmd_bind_vertex_buffers(
+                  commandbuffer,
+                  0,
+                  &[vb.get_buffer()],
+                  &[0],
+                );
+                logical_device.cmd_draw(
+                  commandbuffer,
+                  vb.get_vert_count(),
+                  1,
+                  0,
+                  0,
+                );
+              }
+            }
+          }
+        }
+
+        // End the renderpass
+        logical_device.cmd_end_render_pass(commandbuffer);
+        // End the command buffer
+        logical_device.end_command_buffer(commandbuffer)?;
+      }
     }
-    ibs
+    Ok(())
   }
 
   pub fn set_window_title(&self, title: &str) {
@@ -492,14 +443,8 @@ impl Drop for VulkanApp {
       unsafe {
           self.device.device_wait_idle().expect("Failed to wait for device idle!"); // Wait for the device to be idle before cleaning up
 
-          for ib in &self.index_buffers {
-            ib.destroy(&self.device);
-          }
-
-          //self.device.destroy_buffer(self.vertex_buffer, None);
-          //self.device.free_memory(self.vertex_buffer_memory, None);
-          for vb in &self.vertex_buffers {
-            vb.destroy(&self.device);
+          for rb in &mut self.renderables {
+            rb.destroy(&self.device, &mut self.allocator);
           }
 
           // TODO: Track which buffer came from which pool
@@ -509,6 +454,7 @@ impl Drop for VulkanApp {
           self.pipeline.cleanup(&self.device); // Clean up the pipeline
           self.device.destroy_render_pass(self.renderpass, None); // Destroy the render pass
           self.swapchain.cleanup(&self.device); // Destroy the swapchain
+          std::mem::ManuallyDrop::drop(&mut self.allocator); // Explicitly drop before destruction of device and instance.
           self.device.destroy_device(None); // Destroy the logical device
           std::mem::ManuallyDrop::drop(&mut self.surface); // Destroy the surfaces
           std::mem::ManuallyDrop::drop(&mut self.debug); // Destroy the debug info

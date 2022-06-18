@@ -10,6 +10,7 @@ pub mod index_buffer;
 pub mod physical_device;
 pub mod logical_device;
 pub mod render_pass;
+pub mod renderable;
 pub mod app;
 
 pub mod vertex;
