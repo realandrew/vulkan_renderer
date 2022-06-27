@@ -11,6 +11,7 @@ pub mod physical_device;
 pub mod logical_device;
 pub mod render_pass;
 pub mod renderable;
-pub mod app;
-
 pub mod vertex;
+pub mod textured_vertex;
+pub mod texture;
+pub mod app;

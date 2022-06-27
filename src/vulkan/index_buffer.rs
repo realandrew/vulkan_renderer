@@ -46,10 +46,10 @@ impl IndexBuffer {
   }
 
   pub fn destroy(&mut self, device: &ash::Device, allocator: &mut Allocator) {
-    allocator.free(std::mem::take(&mut self.allocation)).expect("Failed to free vertex buffer memory!");
     unsafe {
       device.destroy_buffer(self.buffer, None);
     }
+    allocator.free(std::mem::take(&mut self.allocation)).expect("Failed to free vertex buffer memory!");
   }
 
   /// Returns the size for the number of u32 indices (in bytes)

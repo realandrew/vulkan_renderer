@@ -2,12 +2,13 @@ use ash::{vk};
 use gpu_allocator::vulkan::*;
 use gpu_allocator::MemoryLocation;
 
-use super::{vertex::Vertex};
+use super::{vertex::Vertex, textured_vertex::TexturedVertex};
 
 pub struct VertexBuffer {
   pub buffer: vk::Buffer,
   pub allocation: Allocation,
   vert_count: u32,
+  is_textured: bool,
 }
 
 impl VertexBuffer {
@@ -44,15 +45,15 @@ impl VertexBuffer {
       buffer: vert_buff,
       allocation: allocation,
       vert_count: 0,
+      is_textured: false,
     }
   }
 
   pub fn destroy(&mut self, device: &ash::Device, allocator: &mut Allocator) {
-    allocator.free(std::mem::take(&mut self.allocation)).expect("Failed to free vertex buffer memory!");
     unsafe {
       device.destroy_buffer(self.buffer, None);
-      //device.free_memory(self.memory, None);
     }
+    allocator.free(std::mem::take(&mut self.allocation)).expect("Failed to free vertex buffer memory!");
     drop(self);
   }
 
@@ -71,6 +72,21 @@ impl VertexBuffer {
       );
     }
     self.vert_count = data.len() as u32;
+    self.is_textured = true;
+    //println!("Updated vertex buffer with {} vertices", self.vert_count);
+  }
+
+  pub fn update_textured_buffer(&mut self, device: &ash::Device, data: &[TexturedVertex]) {
+    let dst = self.allocation.mapped_ptr().unwrap().cast().as_ptr();
+    unsafe {
+      std::ptr::copy_nonoverlapping(
+          data.as_ptr(),
+          dst,
+          data.len(),
+      );
+    }
+    self.vert_count = data.len() as u32;
+    self.is_textured = false;
     //println!("Updated vertex buffer with {} vertices", self.vert_count);
   }
 

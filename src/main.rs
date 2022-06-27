@@ -2,12 +2,18 @@ pub mod vulkan;
 
 use std::time::Instant;
 
-use vulkan::{app::*, vertex::Vertex, vertex_buffer::VertexBuffer, index_buffer::IndexBuffer, renderable::Renderable};
+use vulkan::{app::*, vertex::Vertex, renderable::Renderable, texture::Texture};
 use winit::{event::WindowEvent};
 
 const WINDOW_TITLE: &'static str = "Andrew's Rust-based Vulkan Renderer";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+  #[cfg(debug_assertions)]
+  println!("Starting application in debug mode...");
+
+  #[cfg(not(debug_assertions))]
+  println!("Starting application in production mode...");
+
   let eventloop = winit::event_loop::EventLoop::new(); // Create a winit event loop
   let window = winit::window::WindowBuilder::new()
     .with_title(WINDOW_TITLE)
@@ -22,10 +28,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   simple_logger::SimpleLogger::new().env().init().unwrap();
 
+  // Textures
+  let texture = Texture::from_file("resources/textures/texture.jpg", &mut app);
+  app.textures.push(texture);
+
   let renderable_1 = Renderable::new(&app.device, &mut app.allocator, 4, 6).expect("Failed to create renderable");
   app.renderables.push(renderable_1);
   let renderable_2 = Renderable::new(&app.device, &mut app.allocator, 3, 0).expect("Failed to create renderable");
   app.renderables.push(renderable_2);
+  let renderable_3 = Renderable::new_quad(&app.device, &mut app.allocator).expect("Failed to create renderable");
+  app.renderables.push(renderable_3);
 
   let mut r_color = 0.0;
   let mut g_color = 0.0;
@@ -118,8 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
       app.renderables.get_mut(1).unwrap().update_vertices_buffer(&app.device, &vertices_two);
 
-      VulkanApp::fill_commandbuffers(&app.commandbuffers, &app.device, &app.renderpass, &app.swapchain, 
-        &app.pipeline, &app.renderables).expect("Failed to write commands!");
+      app.fill_commandbuffers().expect("Failed to write commands!");
 
       app.draw_frame();
     }

@@ -1,6 +1,7 @@
 use ash::vk;
 use ash::vk::DebugUtilsMessengerCreateInfoEXT;
 use gpu_allocator::vulkan::*;
+use image::GenericImageView;
 
 use super::surface::*;
 use super::command_pool::*;
@@ -8,9 +9,7 @@ use super::queue::*;
 use super::pipeline::*;
 use super::swapchain::*;
 use super::debug_utils::*;
-use super::vertex_buffer::*;
-use super::vertex::*;
-use super::index_buffer::*;
+use super::texture::*;
 use super::physical_device::*;
 use super::logical_device::*;
 use super::renderable::*;
@@ -32,11 +31,12 @@ pub struct VulkanApp {
   pub device: ash::Device,
   pub swapchain: VulkanSwapchain,
   pub renderpass: vk::RenderPass,
-  pub pipeline: Pipeline,
+  pub pipelines: Vec<Pipeline>,
   pub pools: Pools,
   pub commandbuffers: Vec<vk::CommandBuffer>,
   pub allocator: std::mem::ManuallyDrop<Allocator>,
   pub renderables: Vec<Renderable>,
+  pub textures: Vec<Texture>,
 }
 
 impl VulkanApp {
@@ -66,14 +66,15 @@ impl VulkanApp {
       // Create the framebuffers
       swapchain.create_framebuffers(&logical_device, renderpass)?;
 
-      // Create the pipeline
+      // Create the pipelines
       let pipeline = Pipeline::init(&logical_device, &swapchain, &renderpass)?;
+      let textured_pipeline = Pipeline::init_textured(&logical_device, &swapchain, &renderpass)?;
 
       // Create the command pools
       let pools = Pools::init(&logical_device, &queue_families)?;
 
       let buffer_device_address = false; // Check for and enable buffer device address support at creation time
-      let mut allocator = Allocator::new(&AllocatorCreateDesc {
+      let allocator = Allocator::new(&AllocatorCreateDesc {
         instance: instance.clone(),
         device: logical_device.clone(),
         physical_device,
@@ -85,37 +86,35 @@ impl VulkanApp {
       // Create the command buffers (one for each framebuffer)
       let commandbuffers = VulkanApp::create_commandbuffers(&logical_device, &pools, swapchain.amount_of_images)?;
 
-      // Fill the command buffers
-      VulkanApp::fill_commandbuffers(
-          &commandbuffers,
-          &logical_device,
-          &renderpass,
-          &swapchain,
-          &pipeline,
-          &vec![],
-      )?;
+      let pipelines = vec![pipeline, textured_pipeline];
 
-      Ok(VulkanApp {
-          window,
-          entry,
-          is_framebuffer_resized: false,
-          instance,
-          debug: std::mem::ManuallyDrop::new(debug),
-          surface: std::mem::ManuallyDrop::new(surface),
-          physical_device,
-          physical_device_properties,
-          physical_device_features,
-          queue_families,
-          queues,
-          device: logical_device,
-          swapchain,
-          renderpass,
-          pipeline,
-          pools,
-          commandbuffers,
-          allocator: std::mem::ManuallyDrop::new(allocator),
-          renderables: vec![],
-      })
+      let app = VulkanApp {
+        window,
+        entry,
+        is_framebuffer_resized: false,
+        instance,
+        debug: std::mem::ManuallyDrop::new(debug),
+        surface: std::mem::ManuallyDrop::new(surface),
+        physical_device,
+        physical_device_properties,
+        physical_device_features,
+        queue_families,
+        queues,
+        device: logical_device,
+        swapchain,
+        renderpass,
+        pipelines,
+        pools,
+        commandbuffers,
+        allocator: std::mem::ManuallyDrop::new(allocator),
+        renderables: vec![],
+        textures: vec![],
+    };
+
+      // Fill the command buffers
+      app.fill_commandbuffers()?;
+
+      Ok(app)
   }
 
   // Initialize Vulkan instance
@@ -264,6 +263,9 @@ impl VulkanApp {
         vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::SUBOPTIMAL_KHR => true,
         _ => panic!("Failed to present swapchain image!"),
       },
+      _ => {
+        panic!("Unhandled queue presentation error!");
+      }
     };
 
     if is_resized {
@@ -274,6 +276,8 @@ impl VulkanApp {
 
   // TODO: There may be a small memory leak here. I saw this because when the window is resized a bunch of times memory usage goes up slightly without dropping.
   pub fn recreate_swapchain(&mut self) {
+    println!("Waiting to recreate the swapchain!");
+
     // Recreate the swapchain
     unsafe {
       self.device
@@ -281,16 +285,23 @@ impl VulkanApp {
           .expect("Failed to wait device idle (recreate swapchain)!")
     };
 
+    println!("Recreating swapchain...");
+
     unsafe {
       // TODO: Track which buffer came from which pool
       self.device.free_command_buffers(self.pools.graphics_command_pool, &self.commandbuffers);
 
       self.pools.cleanup(&self.device); // Cleanup the command pool resources
-      self.pipeline.cleanup(&self.device); // Clean up the pipeline
-      //self.device.destroy_render_pass(self.renderpass, None); // Destroy the render pass
+
+      for pipe in &self.pipelines { // Cleanup the pipelines
+        pipe.cleanup(&self.device);
+      }
+
       RenderPass::cleanup_renderpass(&self.device, self.renderpass);
       self.swapchain.cleanup(&self.device); // Destroy the swapchain
     }
+
+    println!("Swapchain cleanup completed, now recreating...");
 
     // Create the swapchain
     self.swapchain = VulkanSwapchain::init(&self.instance, self.physical_device, &self.device, &self.surface, &self.queue_families, &self.queues).expect("Failed to recreate swapchain [swapchain recreation].");
@@ -302,7 +313,11 @@ impl VulkanApp {
     self.swapchain.create_framebuffers(&self.device, self.renderpass).expect("Failed to recreate framebuffers [swapchain recreation].");
 
     // Create the pipeline
-    self.pipeline = Pipeline::init(&self.device, &self.swapchain, &self.renderpass).expect("Failed to recreate pipeline [swapchain recreation].");
+    
+    let pipeline = Pipeline::init(&self.device, &self.swapchain, &self.renderpass).expect("Failed to recreate pipeline [swapchain recreation].");
+    let textured_pipeline = Pipeline::init_textured(&self.device, &self.swapchain, &self.renderpass).expect("Failed to recreate textured pipeline [swapchain recreation].");
+    let pipelines = vec![pipeline, textured_pipeline];
+    self.pipelines = pipelines;
 
     // Create the command pools
     self.pools = Pools::init(&self.device, &self.queue_families).expect("Failed to recreate command pools [swapchain recreation].");
@@ -311,36 +326,26 @@ impl VulkanApp {
     self.commandbuffers = VulkanApp::create_commandbuffers(&self.device, &self.pools, self.swapchain.amount_of_images).expect("Failed to recreate commandbuffers [swapchain recreation].");
 
     // Fill the command buffers
-    VulkanApp::fill_commandbuffers(
-      &self.commandbuffers,
-      &self.device,
-      &self.renderpass,
-      &self.swapchain,
-      &self.pipeline,
-      &self.renderables,
-    ).expect("Failed to fill commandbuffers [swapchain recreation].");
+    self.fill_commandbuffers().expect("Failed to fill commandbuffers [swapchain recreation].");
 
     println!("Swapchain recreated!");
   }
 
   // A method to actually perform our renderpass
-  pub fn fill_commandbuffers(
-    commandbuffers: &[vk::CommandBuffer], logical_device: &ash::Device, renderpass: &vk::RenderPass, swapchain: &VulkanSwapchain, 
-    pipeline: &Pipeline, renderables: &Vec<Renderable>,
-  ) -> Result<(), vk::Result> {
+  pub fn fill_commandbuffers(&self) -> Result<(), vk::Result> {
     unsafe {
       // Wait for our fence to signal that we can write to the command buffer
-      logical_device.wait_for_fences(
-        &[swapchain.may_begin_drawing[swapchain.current_image]], // The fence to wait for
+      self.device.wait_for_fences(
+        &[self.swapchain.may_begin_drawing[self.swapchain.current_image]], // The fence to wait for
         true, // If true wait for all fences, if false wait for at least one fence
         std::u64::MAX, // How long to wait for the fences (nanoseconds)
-      ).expect("Fence wait failed!");
+      )?;
     }
     
-    for (i, &commandbuffer) in commandbuffers.iter().enumerate() {
+    for (i, &commandbuffer) in self.commandbuffers.iter().enumerate() {
       let commandbuffer_begininfo = vk::CommandBufferBeginInfo::builder(); // Start recording a command buffer
       unsafe {
-          logical_device.begin_command_buffer(commandbuffer, &commandbuffer_begininfo)?; // Begin the command buffer
+          self.device.begin_command_buffer(commandbuffer, &commandbuffer_begininfo)?; // Begin the command buffer
       }
 
       // Clear color
@@ -352,25 +357,34 @@ impl VulkanApp {
 
       // Setup a renderpass
       let renderpass_begininfo = vk::RenderPassBeginInfo::builder()
-        .render_pass(*renderpass)
-        .framebuffer(swapchain.framebuffers[i])
+        .render_pass(self.renderpass)
+        .framebuffer(self.swapchain.framebuffers[i])
         .render_area(vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: swapchain.extent,
+            extent: self.swapchain.extent,
         })
         .clear_values(&clear_values);
 
       unsafe {
         // Start the renderpass
-        logical_device.cmd_begin_render_pass(
+        self.device.cmd_begin_render_pass(
             commandbuffer,
             &renderpass_begininfo,
             vk::SubpassContents::INLINE, // Commands for the first subpass are provided inline, not in a secondary command buffer
         );
 
-        for (_i, renderable) in renderables.iter().enumerate() {
+        for (_i, renderable) in self.renderables.iter().enumerate() {
           // Choose (bind) our graphics pipeline
-          logical_device.cmd_bind_pipeline(
+          let pipeline =  match renderable.is_textured {
+            true => {
+              self.pipelines.get(1) // The textured pipeline is the second in the array. TODO: Add a name/id system to pipelines
+            }, false => {
+              self.pipelines.get(0) // The normal pipeline is the first in the array. TODO: Add a name/id system to pipelines
+            }, _ => {
+              panic!("Renderable missing is_textured value!")
+            }
+          }.expect("Failed to get renderable pipeline!");
+          self.device.cmd_bind_pipeline(
             commandbuffer, 
             vk::PipelineBindPoint::GRAPHICS, 
             pipeline.pipeline,
@@ -378,7 +392,7 @@ impl VulkanApp {
           match &renderable.index_buffer {
             Some(index_buffer) => {
               // Bind the index buffer (unlike vertex buffers, can only have 1 index buffer bound at a time)
-              logical_device.cmd_bind_index_buffer(
+              self.device.cmd_bind_index_buffer(
                   commandbuffer,
                   index_buffer.get_buffer(),
                   0,
@@ -387,13 +401,13 @@ impl VulkanApp {
 
               // Draw the vertices
               for vb in &renderable.vertex_buffers {
-                logical_device.cmd_bind_vertex_buffers(
+                self.device.cmd_bind_vertex_buffers(
                     commandbuffer,
                     0,
                     &[vb.get_buffer()],
                     &[0],
               );
-              logical_device.cmd_draw_indexed(
+              self.device.cmd_draw_indexed(
                 commandbuffer,
                 index_buffer.get_indice_count(), // Num verts to draw
                 1, // Not using instanced drawing
@@ -406,13 +420,13 @@ impl VulkanApp {
             None => {
               // Draw the vertices
               for vb in &renderable.vertex_buffers {
-                logical_device.cmd_bind_vertex_buffers(
+                self.device.cmd_bind_vertex_buffers(
                   commandbuffer,
                   0,
                   &[vb.get_buffer()],
                   &[0],
                 );
-                logical_device.cmd_draw(
+                self.device.cmd_draw(
                   commandbuffer,
                   vb.get_vert_count(),
                   1,
@@ -425,9 +439,9 @@ impl VulkanApp {
         }
 
         // End the renderpass
-        logical_device.cmd_end_render_pass(commandbuffer);
+        self.device.cmd_end_render_pass(commandbuffer);
         // End the command buffer
-        logical_device.end_command_buffer(commandbuffer)?;
+        self.device.end_command_buffer(commandbuffer)?;
       }
     }
     Ok(())
@@ -443,6 +457,10 @@ impl Drop for VulkanApp {
       unsafe {
           self.device.device_wait_idle().expect("Failed to wait for device idle!"); // Wait for the device to be idle before cleaning up
 
+          for tex in &mut self.textures {
+            tex.destroy(&self.device, &mut self.allocator);
+          }
+
           for rb in &mut self.renderables {
             rb.destroy(&self.device, &mut self.allocator);
           }
@@ -451,7 +469,11 @@ impl Drop for VulkanApp {
           self.device.free_command_buffers(self.pools.graphics_command_pool, &self.commandbuffers);
 
           self.pools.cleanup(&self.device); // Cleanup the command pool resources
-          self.pipeline.cleanup(&self.device); // Clean up the pipeline
+
+          for pipe in &self.pipelines { // Clean up pipelines
+            pipe.cleanup(&self.device);
+          }
+
           self.device.destroy_render_pass(self.renderpass, None); // Destroy the render pass
           self.swapchain.cleanup(&self.device); // Destroy the swapchain
           std::mem::ManuallyDrop::drop(&mut self.allocator); // Explicitly drop before destruction of device and instance.

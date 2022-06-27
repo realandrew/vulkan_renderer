@@ -4,15 +4,15 @@ use memoffset::offset_of;
 
 #[derive(Clone, Debug, Copy)]
 #[repr(C)]
-pub struct Vertex {
+pub struct TexturedVertex {
   pub pos: [f32; 4], // Position (X, Y, Z, Normalized)
-  pub color: [f32; 4], // Color (R, G, B, A)
+  pub tex_coord: [f32; 2], // Texture Coordinate (X, Y)
 }
-impl Vertex {
+impl TexturedVertex {
   pub fn get_binding_description() -> [vk::VertexInputBindingDescription; 1] {
     [vk::VertexInputBindingDescription {
       binding: 0,
-      stride: std::mem::size_of::<Vertex>() as u32,
+      stride: std::mem::size_of::<TexturedVertex>() as u32,
       input_rate: vk::VertexInputRate::VERTEX,
     }]
   }
@@ -23,13 +23,13 @@ impl Vertex {
         binding: 0,
         location: 0,
         format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: offset_of!(Vertex, pos) as u32,
+        offset: offset_of!(TexturedVertex, pos) as u32,
       },
       vk::VertexInputAttributeDescription {
         binding: 0,
         location: 1,
         format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: offset_of!(Vertex, color) as u32,
+        offset: offset_of!(TexturedVertex, tex_coord) as u32,
       },
     ]
   }

@@ -1,11 +1,12 @@
 use ash::vk;
 use gpu_allocator::vulkan::Allocator;
 
-use super::{vertex_buffer::VertexBuffer, index_buffer::IndexBuffer, vertex::Vertex};
+use super::{vertex_buffer::VertexBuffer, index_buffer::IndexBuffer, vertex::Vertex, textured_vertex::TexturedVertex, pipeline::Pipeline};
 
 pub struct Renderable {
   pub vertex_buffers: Vec<VertexBuffer>,
   pub index_buffer: Option<IndexBuffer>,
+  pub is_textured: bool,
 }
 
 impl Renderable {
@@ -23,13 +24,51 @@ impl Renderable {
         Ok(Renderable {
           vertex_buffers,
           index_buffer: Some(index_buff),
+          is_textured: false,
         })
     } else {
       Ok(Renderable {
         vertex_buffers,
         index_buffer: None,
+        is_textured: false,
       })
     }
+  }
+
+  pub fn new_quad(
+    device: &ash::Device,
+    allocator: &mut Allocator,
+  ) -> Result<Renderable, vk::Result> {
+    let lb = TexturedVertex {
+      pos: [-1.0, 1.0, 0.0, 1.0],
+      tex_coord: [0.0, 1.0],
+    }; //lb: left-bottom
+    let lt = TexturedVertex {
+      pos: [-1.0, -1.0, 0.0, 1.0],
+      tex_coord: [0.0, 0.0],
+    };
+    let rb = TexturedVertex {
+      pos: [1.0, 1.0, 0.0, 1.0],
+      tex_coord: [1.0, 1.0],
+    };
+    let rt = TexturedVertex {
+      pos: [1.0, -1.0, 0.0, 1.0],
+      tex_coord: [1.0, 0.0],
+    };
+    let vertices = vec![lb, lt, rb, rt];
+    let mut vertex_buffers = vec![];
+    let mut vert_buff = VertexBuffer::new(device, allocator, VertexBuffer::get_size_for_num_verts(4));
+    vert_buff.update_textured_buffer(&device, &vertices);
+    vertex_buffers.push(vert_buff);
+    let mut index_buff = IndexBuffer::new(device, allocator, IndexBuffer::get_size_for_num_indices(6));
+    index_buff.update_buffer(device, &vec![
+      1, 0, 2, 2, 3, 1,
+    ]);
+    Ok(Renderable {
+      vertex_buffers,
+      index_buffer: Some(index_buff),
+      is_textured: true,
+    })
   }
 
   pub fn update_vertices_buffer(&mut self, device: &ash::Device, data: &[Vertex]) {
@@ -42,7 +81,7 @@ impl Renderable {
         index_buff.update_buffer(device, data);
       },
       None => {
-        println!("Tried to update indices buffer on a renderable created with an index buffer!");
+        println!("Tried to update indices buffer on a renderable created without an index buffer!");
       },
     }
   }
