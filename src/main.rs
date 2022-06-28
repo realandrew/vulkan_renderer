@@ -2,6 +2,7 @@ pub mod vulkan;
 
 use std::time::Instant;
 
+use ash::vk;
 use vulkan::{app::*, vertex::Vertex, renderable::Renderable, texture::Texture};
 use winit::{event::WindowEvent};
 
@@ -129,6 +130,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       app.renderables.get_mut(0).unwrap().update_indices_buffer(&app.device, &indices);
 
       app.renderables.get_mut(1).unwrap().update_vertices_buffer(&app.device, &vertices_two);
+
+      let imageinfo = vk::DescriptorImageInfo {
+        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        image_view: app.textures[0].imageview,
+        sampler: app.textures[0].sampler,
+        ..Default::default()
+      };
+      let descriptorwrite_image = vk::WriteDescriptorSet {
+          dst_set: app.descriptor_sets_texture[app.swapchain.current_image],
+          dst_binding: 0,
+          dst_array_element: 0,
+          descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+          descriptor_count: 1,
+          p_image_info: [imageinfo].as_ptr(),
+          ..Default::default()
+      };
+
+      unsafe {
+          app
+              .device
+              .update_descriptor_sets(&[descriptorwrite_image], &[]);
+      }
 
       app.fill_commandbuffers().expect("Failed to write commands!");
 

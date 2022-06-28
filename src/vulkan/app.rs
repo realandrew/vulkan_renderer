@@ -37,6 +37,8 @@ pub struct VulkanApp {
   pub allocator: std::mem::ManuallyDrop<Allocator>,
   pub renderables: Vec<Renderable>,
   pub textures: Vec<Texture>,
+  pub descriptor_pool: vk::DescriptorPool,
+  pub descriptor_sets_texture: Vec<vk::DescriptorSet>,
 }
 
 impl VulkanApp {
@@ -88,6 +90,32 @@ impl VulkanApp {
 
       let pipelines = vec![pipeline, textured_pipeline];
 
+      // Descriptor layouts stuff
+      let descriptor_pool_sizes = [
+        /*vk::DescriptorPoolSize {
+          ty: vk::DescriptorType::UNIFORM_BUFFER,
+          descriptor_count: swapchain.amount_of_images as u32,
+        },*/
+          vk::DescriptorPoolSize {
+          ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+          descriptor_count: swapchain.amount_of_images as u32,
+        }
+      ];
+
+      let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+      .max_sets(swapchain.amount_of_images as u32)
+      .pool_sizes(&descriptor_pool_sizes);
+
+      let descriptor_pool = unsafe { logical_device.create_descriptor_pool(&descriptor_pool_info, None) }?;
+
+      let desc_layouts_texture = vec![pipelines[1].descriptor_set_layouts[0]; swapchain.amount_of_images];
+      let descriptor_set_allocate_info_texture = vk::DescriptorSetAllocateInfo::builder()
+          .descriptor_pool(descriptor_pool)
+          .set_layouts(&desc_layouts_texture);
+      let descriptor_sets_texture = unsafe {
+          logical_device.allocate_descriptor_sets(&descriptor_set_allocate_info_texture)
+      }?;
+
       let app = VulkanApp {
         window,
         entry,
@@ -109,6 +137,8 @@ impl VulkanApp {
         allocator: std::mem::ManuallyDrop::new(allocator),
         renderables: vec![],
         textures: vec![],
+        descriptor_pool,
+        descriptor_sets_texture,
     };
 
       // Fill the command buffers
@@ -148,7 +178,7 @@ impl VulkanApp {
       let required_surface_extensions = ash_window::enumerate_required_extensions(&window).unwrap().iter().map(|ext| *ext).collect::<Vec<*const i8>>();
       extension_name_pointers.extend(required_surface_extensions.iter());
 
-      println!("Extensions in use: ");
+      println!("\n[Vulkan-render][info] Vulkan extensions in use: ");
       for ext in extension_name_pointers.iter() {
           println!("\t{}", unsafe { std::ffi::CStr::from_ptr(*ext).to_str().unwrap() });
       }
@@ -389,6 +419,21 @@ impl VulkanApp {
             vk::PipelineBindPoint::GRAPHICS, 
             pipeline.pipeline,
           );
+          
+          if renderable.is_textured {
+            self.device.cmd_bind_descriptor_sets(
+              commandbuffer,
+              vk::PipelineBindPoint::GRAPHICS,
+              self.pipelines[1].layout,
+              0,
+              &[
+                  //self.descriptor_sets_camera[index],
+                  self.descriptor_sets_texture[i],
+              ],
+              &[],
+            );
+          }
+
           match &renderable.index_buffer {
             Some(index_buffer) => {
               // Bind the index buffer (unlike vertex buffers, can only have 1 index buffer bound at a time)
@@ -456,6 +501,9 @@ impl Drop for VulkanApp {
   fn drop(&mut self) {
       unsafe {
           self.device.device_wait_idle().expect("Failed to wait for device idle!"); // Wait for the device to be idle before cleaning up
+
+          self.device.free_descriptor_sets(self.descriptor_pool, &self.descriptor_sets_texture).expect("Failed to free texture descriptor sets!");
+          self.device.destroy_descriptor_pool(self.descriptor_pool, None);
 
           for tex in &mut self.textures {
             tex.destroy(&self.device, &mut self.allocator);

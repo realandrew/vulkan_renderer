@@ -258,6 +258,18 @@ impl Pipeline {
     let colourblend_info =
       vk::PipelineColorBlendStateCreateInfo::builder().attachments(&colourblend_attachments);
 
+    /*let descriptorset_layout_binding_descs0 = [vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .build()];
+    let descriptorset_layout_info0 = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(&descriptorset_layout_binding_descs0);
+    let descriptorsetlayout0 = unsafe {
+        logical_device.create_descriptor_set_layout(&descriptorset_layout_info0, None)
+    }?;*/
+
     let descriptorset_layout_binding_descs1 = [vk::DescriptorSetLayoutBinding::builder()
       .binding(0)
       .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -272,7 +284,7 @@ impl Pipeline {
     let desclayouts = vec![descriptorsetlayout1];
 
     // Create the pipeline layout info (defines data attached to the pipeline but not the vertices)
-    let pipelinelayout_info = vk::PipelineLayoutCreateInfo::builder();
+    let pipelinelayout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&desclayouts);
     let pipelinelayout = unsafe { logical_device.create_pipeline_layout(&pipelinelayout_info, None) }?;
     // Create the pipeline info (defines the data attached to the pipeline and the vertices)
     let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()

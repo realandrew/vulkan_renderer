@@ -7,37 +7,60 @@ impl PhysicalDevice {
   pub fn pick_physical_device(instance: &ash::Instance) -> Option<(vk::PhysicalDevice, vk::PhysicalDeviceProperties, vk::PhysicalDeviceFeatures)> {
     let phys_devs = unsafe { instance.enumerate_physical_devices().expect("Could not enumerate physical devices!") }; // Get all physical devices
     let mut phys_dev: vk::PhysicalDevice = vk::PhysicalDevice::null(); // Create a null physical device
+    let mut index: u8 = 0;
     let mut current_score = 0.0; // Create a score variable
-    for p in &phys_devs { // For each physical device
-        let score = PhysicalDevice::rate_physical_device(instance, p);
-        if score > current_score { // If the score is higher than the current score, set the physical device to this one
-            current_score = score;
-            phys_dev = *p;
-        }
+
+    println!("\n[Vulkan-render][info] Available devices: ");
+    for (i, p) in phys_devs.iter().enumerate() { // For each physical device
+      let score = PhysicalDevice::rate_physical_device(instance, p);
+      if score > current_score { // If the score is higher than the current score, set the physical device to this one
+          current_score = score;
+          phys_dev = *p;
+          index = i as u8;
+      }
+
+      let props = unsafe { instance.get_physical_device_properties(phys_dev) }; // Get the properties of the physical device
+      let device_name = String::from(
+          unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
+              .to_str()
+              .unwrap(),
+      ); // Get the name of the physical device
+
+      let driver_major = props.driver_version >> 22; // Get the major version of the driver
+      let driver_minor = (props.driver_version >> 12) & 0x3ff; // Get the minor version of the driver
+      let driver_patch = props.driver_version & 0xfff; // Get the patch version of the driver
+
+      let api_major = vk::api_version_major(props.api_version);
+      let api_minor = vk::api_version_minor(props.api_version);
+      let api_patch = vk::api_version_patch(props.api_version);
+      let api_variant = vk::api_version_variant(props.api_version);
+
+      println!("\t[{}] {:?} | {} | driver v{}.{}.{} | Vulkan v{}.{}.{} [variant {}] | score {}", i, props.device_type, device_name, driver_major, driver_minor, driver_patch, api_major, api_minor, api_patch, api_variant, current_score);
     }
+    println!("");
+
     if phys_dev == vk::PhysicalDevice::null() { // If the physical device is null, return None (this means no suitable devices were found)
-        return None;
+      return None;
     } else {
-        let props = unsafe { instance.get_physical_device_properties(phys_dev) }; // Get the properties of the physical device
-        let feats = unsafe { instance.get_physical_device_features(phys_dev) }; // Get the features of the physical device
-        let device_name = String::from(
-            unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
-                .to_str()
-                .unwrap(),
-        ); // Get the name of the physical device
+      let props = unsafe { instance.get_physical_device_properties(phys_dev) }; // Get the properties of the physical device
+      let feats = unsafe { instance.get_physical_device_features(phys_dev) }; // Get the features of the physical device
+      let device_name = String::from(
+          unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
+              .to_str()
+              .unwrap(),
+      ); // Get the name of the physical device
 
-        let driver_major = props.driver_version >> 22; // Get the major version of the driver
-        let driver_minor = (props.driver_version >> 12) & 0x3ff; // Get the minor version of the driver
-        let driver_patch = props.driver_version & 0xfff; // Get the patch version of the driver
+      let driver_major = props.driver_version >> 22; // Get the major version of the driver
+      let driver_minor = (props.driver_version >> 12) & 0x3ff; // Get the minor version of the driver
+      let driver_patch = props.driver_version & 0xfff; // Get the patch version of the driver
 
-        let api_major = vk::api_version_major(props.api_version);
-        let api_minor = vk::api_version_minor(props.api_version);
-        let api_patch = vk::api_version_patch(props.api_version);
-        let api_variant = vk::api_version_variant(props.api_version);
+      let api_major = vk::api_version_major(props.api_version);
+      let api_minor = vk::api_version_minor(props.api_version);
+      let api_patch = vk::api_version_patch(props.api_version);
+      let api_variant = vk::api_version_variant(props.api_version);
 
-        println!("[Vulkan-render][info] Using {:?} device {} (driver v{}.{}.{}) with score {}.", props.device_type, device_name, driver_major, driver_minor, driver_patch, current_score);
-        println!("[Vulkan-render][info] Device supports Vulkan v{}.{}.{} (variant {}).", api_major, api_minor, api_patch, api_variant);
-        return Some((phys_dev, props, feats));
+      println!("[Vulkan-render][info] Using [{}] {:?} device {} (driver v{}.{}.{}) running Vulkan v{}.{}.{} [variant {}] with score {}.", index, props.device_type, device_name, driver_major, driver_minor, driver_patch, api_major, api_minor, api_patch, api_variant, current_score);
+      return Some((phys_dev, props, feats));
     }
   }
 

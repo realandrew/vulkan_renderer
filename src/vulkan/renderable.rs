@@ -40,19 +40,19 @@ impl Renderable {
     allocator: &mut Allocator,
   ) -> Result<Renderable, vk::Result> {
     let lb = TexturedVertex {
-      pos: [-1.0, 1.0, 0.0, 1.0],
+      pos: [-0.8, 0.8, 0.0, 1.0],
       tex_coord: [0.0, 1.0],
     }; //lb: left-bottom
     let lt = TexturedVertex {
-      pos: [-1.0, -1.0, 0.0, 1.0],
+      pos: [-0.8, -0.8, 0.0, 1.0],
       tex_coord: [0.0, 0.0],
     };
     let rb = TexturedVertex {
-      pos: [1.0, 1.0, 0.0, 1.0],
+      pos: [0.8, 0.8, 0.0, 1.0],
       tex_coord: [1.0, 1.0],
     };
     let rt = TexturedVertex {
-      pos: [1.0, -1.0, 0.0, 1.0],
+      pos: [0.8, -0.8, 0.0, 1.0],
       tex_coord: [1.0, 0.0],
     };
     let vertices = vec![lb, lt, rb, rt];

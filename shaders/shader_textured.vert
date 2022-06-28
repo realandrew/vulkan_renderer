@@ -4,10 +4,10 @@
 
 // Inputs
 layout(location = 0) in vec4 in_position;
-layout(location = 1) in vec4 in_tex_coord;
+layout(location = 1) in vec2 in_tex_coord;
 
 // Outputs
-layout (location=0) out vec3 out_color; // Note variables are defined by their location, not their names
+layout (location=0) out vec2 uv; // Note variables are defined by their location, not their names
 
 out gl_PerVertex
 {
@@ -21,5 +21,5 @@ void main() {
     // gl_Position is a special variable that is used to store the final position of the vertex
     gl_Position = in_position;
 
-    out_color = vec3(1.0, 1.0, 0.5); //vec4(0.0, 0.6, 1.0, 1.0); // This is the color of the vertice(s)
+    uv = in_tex_coord;
 }
