@@ -2,6 +2,11 @@ use ash::vk;
 use ash::vk::DebugUtilsMessengerCreateInfoEXT;
 use gpu_allocator::vulkan::*;
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use ash::vk::{
+  KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
+};
+
 use super::surface::*;
 use super::command_pool::*;
 use super::queue::*;
@@ -149,6 +154,12 @@ impl VulkanApp {
       let required_surface_extensions = ash_window::enumerate_required_extensions(&window).unwrap().iter().map(|ext| *ext).collect::<Vec<*const i8>>();
       extension_name_pointers.extend(required_surface_extensions.iter());
 
+      #[cfg(any(target_os = "macos", target_os = "ios"))]
+      {
+        extension_name_pointers.push(KhrPortabilityEnumerationFn::name().as_ptr());
+        extension_name_pointers.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr()); // Required by VK_HKR_portability_subset
+      }
+
       println!("Extensions in use: ");
       for ext in extension_name_pointers.iter() {
           println!("\t{}", unsafe { std::ffi::CStr::from_ptr(*ext).to_str().unwrap() });
@@ -168,12 +179,19 @@ impl VulkanApp {
           ..Default::default()
       };
 
+      let create_flags = if cfg!(any(target_os = "macos", target_os = "ios")) {
+        vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+      } else {
+        vk::InstanceCreateFlags::default()
+      };
+
       // Actually create the Vulkan instance
       let create_info = vk::InstanceCreateInfo::builder()
           .push_next(&mut debugcreateinfo)
           .application_info(&app_info)
           .enabled_layer_names(&layer_name_pointers)
-          .enabled_extension_names(&extension_name_pointers);
+          .enabled_extension_names(&extension_name_pointers)
+          .flags(create_flags);
 
       unsafe { (entry.create_instance(&create_info, None), debugcreateinfo) }
   }
