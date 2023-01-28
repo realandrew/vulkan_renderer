@@ -1,5 +1,10 @@
 use ash::vk;
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use ash::vk::{
+  KhrPortabilitySubsetFn,
+};
+
 use super::queue::*;
 
 pub struct LogicalDevice {}
@@ -30,7 +35,11 @@ impl LogicalDevice {
 
     // Get info about device extensions
     let device_extension_name_pointers: Vec<*const i8> =
-        vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+        vec![
+            ash::extensions::khr::Swapchain::name().as_ptr(),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            KhrPortabilitySubsetFn::name().as_ptr(),
+        ];
 
     // Create the logical device
     let device_create_info = vk::DeviceCreateInfo::builder()

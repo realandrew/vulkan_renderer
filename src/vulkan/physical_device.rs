@@ -89,9 +89,12 @@ impl PhysicalDevice {
     score += props.limits.max_image_dimension2_d as f32;
 
     // Application can't function without geometry shaders
-    if features.geometry_shader < 1 { // Features are either 0 (not supported) or 1 (supported)
+    // TODO: Actually this is not true. And MoltenVK doesn't support geometry shaders. We might need these for certain features
+    // (especially 3D games) so this should be conditionally added if we are actually utilizing those features.
+    /*if features.geometry_shader < 1 { // Features are either 0 (not supported) or 1 (supported)
+        println!("Device missing geometry shader support, thus your system is not supported!");
         return 0.0;
-    }
+    }*/
 
     let mut found_graphics_queue = false; // We need a graphics queue
     let mut found_transfer_queue = false; // We need a transfer queue
@@ -105,6 +108,7 @@ impl PhysicalDevice {
     }
 
     if !found_graphics_queue || !found_transfer_queue {
+        println!("Phys device missing queues");
         return 0.0;
     }
 
