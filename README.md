@@ -15,3 +15,7 @@ Windows has the most support as it's my main development system and the most use
 Linux has secondary support. This means it's officially supported and stable releases should work fine on it. However it has less testing than Windows and alpha/beta releases are allowed to break it (but must be fixed prior to releasing another stable).
 
 MacOS has essentially semi-official support. I do my best to support it via MoltenVK, but it may well not work correctly and doesn't get as much testing as other platforms. Stable releases are allowed to break on MacOS, although I will do my best to prevent that. Also it's important to note that MoltenVK works via the Vulkan portability extension. This means it only supports a subset of the Vulkan standard, and is missing some arguably pretty important features (such as geometry shaders).
+
+### Mac OS
+
+Note, I had trouble getting this to run on Mac OS for awhile. I kept getting a linking error related to a lib called lvulkan. If you are using the LunarG SDK this can be fixed by selecting the "System Global Installation" component during install. This installs the system wide ICD, layers, and SDK tools to /usr/local.
